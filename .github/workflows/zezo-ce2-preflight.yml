@@ -39,7 +39,20 @@ jobs:
           curl --fail --location --retry 2 --connect-timeout 20 "$URL" -o /tmp/ti-cgt.bin
           test "$(stat -c %s /tmp/ti-cgt.bin)" -gt 1000000
           chmod +x /tmp/ti-cgt.bin
+          echo "Installer format:"; file /tmp/ti-cgt.bin
+          echo "Installer options:"
+          /tmp/ti-cgt.bin --help 2>&1 | head -90 || true
+          echo "Attempt unattended install:"
+          set +e
           /tmp/ti-cgt.bin --mode unattended --prefix /tmp/ti-cgt-c6000
+          install_rc=$?
+          set -e
+          echo "Installer exit code: $install_rc"
+          echo "Installed compiler candidates:"
+          find /tmp/ti-cgt-c6000 /opt /home/runner -name cl6x -type f -print 2>/dev/null | head -30 || true
+          echo "Installer logs:"
+          find /tmp /home/runner -maxdepth 4 -iname '*install*.log' -type f -print 2>/dev/null | head -15 || true
+          test "$install_rc" -eq 0
           test -x /tmp/ti-cgt-c6000/bin/cl6x
           /tmp/ti-cgt-c6000/bin/cl6x --version
           /tmp/ti-cgt-c6000/bin/cl6x --c99 --opt_level=2 -mv6740 --abi=eabi --mem_model:data=far --define=ZEZO_STAGE=0 -c zezo-ce2/src/zezo_ce2/zezo_ce2.c --output_file=/tmp/zezo_ce2.obj
