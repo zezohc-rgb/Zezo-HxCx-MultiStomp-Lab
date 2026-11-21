@@ -36,7 +36,7 @@ jobs:
                   parts = pathlib.PurePosixPath(name).parts
                   if name.startswith("/") or ".." in parts:
                       raise SystemExit(f"Unsafe archive path: {name}")
-              for component in ("product/cpu/", "product/emu/", "product/formats/"):
+              for component in ("ziddle/runtime/c674x-cpu/", "ziddle/runtime/effect-emulator/", "ziddle/audio/offline-renderer/", "ziddle/shells/cli/"):
                   found = any(component in name for name in names)
                   print(component, "FOUND" if found else "MISSING")
                   if not found:
