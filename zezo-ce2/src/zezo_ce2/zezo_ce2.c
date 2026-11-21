@@ -54,12 +54,13 @@ void Fx_DLY_ZezoCE2(unsigned int *ctx) {
  for(int i=0;i<8;i++){
    float l=buf[i],r=buf[i+8],input=l;
    float phase=s->phase;
+   if(!(phase>=0.0f && phase<1.0f)) { phase=0.0f; s->phase=0.0f; }
    float tri=phase<0.5f?(-1.0f+4.0f*phase):(3.0f-4.0f*phase);
    s->phase=phase+phase_step;if(s->phase>=1.0f)s->phase-=1.0f;
    float m=0.21794872f*depth*tri;
    float inv=1.0f+m+m*m+m*m*m+m*m*m*m;
    float d=171.99f*inv;
-   if(d<128.0f)d=128.0f;if(d>256.0f)d=256.0f;
+   if(!(d>=128.0f))d=128.0f;if(d>256.0f)d=256.0f;
    s->pre_shelf+=shelf*(input-s->pre_shelf);
    float pre=5.7f*input-4.7f*s->pre_shelf;
    s->pre1+=aa*(pre-s->pre1);s->pre2+=aa*(s->pre1-s->pre2);
