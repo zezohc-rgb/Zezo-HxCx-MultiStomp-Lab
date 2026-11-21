@@ -11,7 +11,7 @@ Evidence: repeat98/ZoomMultistompZDL docs/EDIT-HANDLER-ABI.md and docs/STATE-ABI
 ## Release blockers
 1. Record actual params[5]/params[6] at knob 0, 25, 50, 75 and 100 on a known-safe probe. Verify both controls independently.
 2. Select the scaling law only after measurement; current norm(x) is provisional and treats 0..1 differently from 1..100.
-3. Independently audit effect FXID 405 against installed stock/custom ZDLs; 65535 is disposable CI-only and must never be released.
+3. **CONFIRMED COLLISION:** current provisional gid 8 / fxid 405 conflicts with themanro/ZoomMultistompZDL's Room manifest (listed in repeat98/ZoomMultistompZDL docs/FXID-REGISTRY.md, section IDs used by other collections, checked 2026-11-21). NEVER install or release this ID. Select a new identifier only after checking all known collections and the pedal's existing effects. CI uses disposable 65535 and must never publish it.
 4. Confirm on real MS-70CDR that bypass, slot switching, page editing, multiple slots and audio accumulation work.
 5. Compare level, rate, depth and spectral behavior against a captured Boss CE-2 reference. Host Python model is not a TI emulator.
 
