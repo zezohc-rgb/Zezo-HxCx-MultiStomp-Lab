@@ -1,0 +1,33 @@
+name: Zezo CE-2 source preflight
+on:
+  pull_request:
+    paths:
+      - 'zezo-ce2/**'
+      - '.github/workflows/zezo-ce2-*.yml'
+  push:
+    branches: ['feature/zezo-ce2-cloud-build']
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate source and manifest without TI compiler
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile zezo-ce2/src/zezo_ce2/build.py
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('zezo-ce2/src/zezo_ce2')
+          m=json.loads((p/'manifest.json').read_text())
+          src=(p/'zezo_ce2.c').read_text()
+          assert m['effect_name']=='ZezoCE2'
+          assert m['audio_func_name']=='Fx_DLY_ZezoCE2'
+          assert [x['name'] for x in m['params']]==['Rate','Depth']
+          assert m['fxid']==405, 'provisional ID changed: review before testing'
+          assert '#pragma CODE_SECTION(Fx_DLY_ZezoCE2, ".audio")' in src
+          assert 'ZEZO_STAGE' in src and 'CLEAR_STEP' in src
+          assert not any(x in src for x in ('sinf(', 'powf(', 'malloc(', 'calloc('))
+          print('Source preflight OK; NOT a TI compile or hardware validation')
+          PY
