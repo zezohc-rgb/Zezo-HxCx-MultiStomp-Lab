@@ -46,8 +46,8 @@ void Fx_DLY_ZezoCE2(unsigned int *ctx) {
    return;
  }
  if(ZEZO_STAGE==1)return;
- const float rate=norm(params[1]);
- const float depth=norm(params[2]);
+ const float rate=norm(params[5]);
+ const float depth=norm(params[6]);
  const float shelf=0.05675f, aa=0.6097f, aa3=0.6254f;
  const float de=0.2832f,hp=0.01415f;
  const float phase_step=(0.30f+3.20f*rate)*0.000022675737f;
