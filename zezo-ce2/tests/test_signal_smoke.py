@@ -2,14 +2,14 @@
 import math
 import unittest
 
-def render(rate, depth, samples=8192):
+def render(rate, depth, samples=8192, frequency=440):
     delay=[0.0]*1024
     phase=0.0
     write=0
     pre_shelf=pre1=pre2=pre3=post1=post2=post3=de_shelf=wet_lp=0.0
     output=[]
     for i in range(samples):
-        x=0.15*math.sin(2*math.pi*440*i/44100)
+        x=0.15*math.sin(2*math.pi*frequency*i/44100)
         tri=(-1+4*phase) if phase<0.5 else (3-4*phase)
         phase+=(.30+3.20*rate)*.000022675737
         if phase>=1:phase-=1
@@ -56,6 +56,12 @@ class SignalSmokeTests(unittest.TestCase):
         slow=render(0,1)
         fast=render(1,1)
         self.assertGreater(sum(abs(a-b) for a,b in zip(slow,fast)),.01)
+    def test_frequency_sweep_is_finite(self):
+        # Smoke check across the guitar band; no claim of CE-2 frequency matching.
+        for frequency in (82.41, 110, 220, 440, 880, 1760, 3520, 6000):
+            y=render(.5,.5,samples=4096,frequency=frequency)
+            self.assertTrue(all(math.isfinite(v) for v in y))
+            self.assertLess(max(map(abs,y)),1.0)
     def test_depth_changes_signal(self):
         dry=render(.5,0)
         mod=render(.5,1)
