@@ -28,6 +28,9 @@ jobs:
           assert m['audio_func_name']=='Fx_DLY_ZezoCE2'
           assert [x['name'] for x in m['params']]==['Rate','Depth']
           assert m['fxid']==405, 'provisional ID changed: review before testing'
+          builder=(p/'build.py').read_text()
+          assert "m['gid'] == 8 and m['fxid'] == 405" in builder, 'collision guard removed'
+          assert "ZEZO_DIAGNOSTIC_BUILD" in builder, 'diagnostic guard removed'
           assert '#pragma CODE_SECTION(Fx_DLY_ZezoCE2, ".audio")' in src
           assert 'ZEZO_STAGE' in src and 'CLEAR_STEP' in src
           assert not any(x in src for x in ('sinf(', 'powf(', 'malloc(', 'calloc('))
