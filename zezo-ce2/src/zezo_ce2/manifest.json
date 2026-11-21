@@ -2,8 +2,8 @@
   "effect_name": "ZezoCE2",
   "audio_func_name": "Fx_DLY_ZezoCE2",
   "gid": 8,
-  "fxid": 405,
-  "fxid_version": "0.06",
+  "fxid": 960,
+  "fxid_version": "0.07",
   "flags_byte": 1,
   "params": [
     {
