@@ -67,6 +67,7 @@ jobs:
         shell: bash
         env:
           TI_CGT_ROOT: /tmp/ti-cgt-c6000/ti-cgt-c6000_8.5.0.LTS
+          TI_CGT: /tmp/ti-cgt-c6000/ti-cgt-c6000_8.5.0.LTS
           ZEZO_STAGE: '2'
           ZEZO_FXID_REVIEWED: '65535'
           ZDL_OWN_RUNTIME: '1'
