@@ -24,6 +24,8 @@ class PlannedSection:
 
 def plan_elf32_sections(elf: bytes) -> dict:
     info = inspect_elf32(elf)
+    if info['machine'] != 140:
+        raise ELFInspectionError('Expected TI C6000 ELF (e_machine=140)')
     sections = []
     ranges = []
     total = 0
