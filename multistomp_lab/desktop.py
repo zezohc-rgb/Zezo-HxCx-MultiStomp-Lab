@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
+from pathlib import Path
 
 from .zdl_cli import inspect_file
 
@@ -63,12 +64,12 @@ class MultiStompDesktop(tk.Tk):
         try:
             import json
             report = inspect_file(path)
-        except (OSError, ValueError, Exception) as exc:
+        except Exception as exc:
             # Malformed/untrusted files must not terminate the desktop UI.
             messagebox.showerror("ZDL inspection failed", str(exc))
             return
         self.slots[index] = report
-        self.labels[index].configure(text=report["file_name"])
+        self.labels[index].configure(text=Path(path).name)
         self.show(json.dumps({"slot": index + 1, **report},
                              ensure_ascii=False, indent=2, default=str))
 
