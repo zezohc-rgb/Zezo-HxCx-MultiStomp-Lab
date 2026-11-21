@@ -31,3 +31,17 @@ jobs:
           assert not any(x in src for x in ('sinf(', 'powf(', 'malloc(', 'calloc('))
           print('Source preflight OK; NOT a TI compile or hardware validation')
           PY
+      - name: TI C6000 compiler availability and stage-0 compilation
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL='https://dr-download.ti.com/software-development/ide-configuration-compiler-or-debugger/MD-vqU2jj6ibH/8.5.0.LTS/ti_cgt_c6000_8.5.0.LTS_linux-x64_installer.bin'
+          curl --fail --location --retry 2 --connect-timeout 20 "$URL" -o /tmp/ti-cgt.bin
+          test "$(stat -c %s /tmp/ti-cgt.bin)" -gt 1000000
+          chmod +x /tmp/ti-cgt.bin
+          /tmp/ti-cgt.bin --mode unattended --prefix /tmp/ti-cgt-c6000
+          test -x /tmp/ti-cgt-c6000/bin/cl6x
+          /tmp/ti-cgt-c6000/bin/cl6x --version
+          /tmp/ti-cgt-c6000/bin/cl6x --c99 --opt_level=2 -mv6740 --abi=eabi --mem_model:data=far --define=ZEZO_STAGE=0 -c zezo-ce2/src/zezo_ce2/zezo_ce2.c --output_file=/tmp/zezo_ce2.obj
+          test -s /tmp/zezo_ce2.obj
+          echo "TI compiler stage-0 object compiled; not a ZDL"
