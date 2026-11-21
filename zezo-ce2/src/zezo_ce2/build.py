@@ -7,7 +7,7 @@ ROOT=HERE.parent.parent
 sys.path.insert(0,str(ROOT/'build'))
 sys.path.insert(0,str(HERE.parent/'airwindows'/'common'))
 m=json.loads((HERE/'manifest.json').read_text())
-if os.environ.get('ZEZO_FXID_REVIEWED') != str(m['fxid']):
+if m['gid'] == 8 and m['fxid'] == 405:\n    raise SystemExit('BLOCKED: gid 8 / fxid 405 collides with Room in themanro collection')\nif m['fxid'] == 65535 and os.environ.get('ZEZO_DIAGNOSTIC_BUILD') != '1':\n    raise SystemExit('BLOCKED: disposable diagnostic FXID requires explicit ZEZO_DIAGNOSTIC_BUILD=1')\nif os.environ.get('ZEZO_FXID_REVIEWED') != str(m['fxid']):
     raise SystemExit('BLOCKED: independently review FXID collision before build')
 TI_ROOT=Path(os.environ.get('TI_CGT_ROOT','/tmp/ti-cgt-c6000'))
 cl6x=TI_ROOT/'bin'/'cl6x'
