@@ -129,7 +129,7 @@ jobs:
               outputs[str(stage)] = {'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest()}
           Path('zezo-ce2-build-report.json').write_text(
               json.dumps({'hardware_tested': False, 'audio_tested': False,
-                          'disposable_fxid': 65535, 'stages': outputs}, indent=2) + '\\n')
+                          'disposable_fxid': 65535, 'stages': outputs}, indent=2) + '\n')
           PY
       - name: Upload diagnostic metadata only (no unvalidated ZDL)
         if: success()
