@@ -1,5 +1,6 @@
 name: Zezo CE-2 source preflight
 on:
+  workflow_dispatch:
   pull_request:
     paths:
       - 'zezo-ce2/**'
@@ -109,3 +110,13 @@ jobs:
           print(f'Stage {stage}: ZDL wrapper and ELF validated structurally; NO audio or hardware validation')
           PY
           done
+          python3 - <<'PY'
+          import hashlib
+          from pathlib import Path
+          a = Path('dist/ZZC2S0.ZDL').read_bytes()
+          b = Path('dist/ZZC2S2.ZDL').read_bytes()
+          assert a != b, 'Stage 2 output is identical to bypass-only stage 0'
+          print('Stage 0 SHA256:', hashlib.sha256(a).hexdigest())
+          print('Stage 2 SHA256:', hashlib.sha256(b).hexdigest())
+          print('Distinct stage 2 DSP build confirmed structurally, not audibly')
+          PY
