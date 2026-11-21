@@ -36,7 +36,7 @@ jobs:
           chmod +x /tmp/ti-cgt.bin
           /tmp/ti-cgt.bin --mode unattended --prefix /tmp/ti-cgt-c6000
           test -x /tmp/ti-cgt-c6000/ti-cgt-c6000_8.5.0.LTS/bin/cl6x
-          /tmp/ti-cgt-c6000/ti-cgt-c6000_8.5.0.LTS/bin/cl6x --version
+          /tmp/ti-cgt-c6000/ti-cgt-c6000_8.5.0.LTS/bin/cl6x --help | head -12
       - name: Build with upstream ZoomMultistompZDL linker
         env:
           TI_CGT_ROOT: /tmp/ti-cgt-c6000/ti-cgt-c6000_8.5.0.LTS
