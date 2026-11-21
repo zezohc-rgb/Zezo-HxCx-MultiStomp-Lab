@@ -64,7 +64,7 @@ jobs:
             test -s "/tmp/zezo_ce2_stage${stage}.obj"
             echo "TI compiler stage-$stage object compiled; not a ZDL"
           done
-      - name: Link diagnostic stage 0 and audio stage 2 ZDLs (never publish)
+      - name: Link diagnostic stages 0 and 1 plus audio stage 2 ZDLs (never publish)
         shell: bash
         env:
           TI_CGT_ROOT: /tmp/ti-cgt-c6000/ti-cgt-c6000_8.5.0.LTS
@@ -85,10 +85,10 @@ jobs:
           m['fxid']=65535  # deliberately invalid for release; diagnostic only
           p.write_text(json.dumps(m))
           PY
-          trap 'rm -f /tmp/ZoomMultistompZDL/dist/ZZC2S0.ZDL /tmp/ZoomMultistompZDL/dist/ZZC2S2.ZDL' EXIT
+          trap 'rm -f /tmp/ZoomMultistompZDL/dist/ZZC2S0.ZDL /tmp/ZoomMultistompZDL/dist/ZZC2S1.ZDL /tmp/ZoomMultistompZDL/dist/ZZC2S2.ZDL' EXIT
           cd /tmp/ZoomMultistompZDL
           echo 'Using upstream own runtime for knob handlers; no stock LineSel handler blob'
-          for stage in 0 2; do
+          for stage in 0 1 2; do
             ZEZO_STAGE="$stage" python3 src/zezo_ce2/build.py
             test -s "dist/ZZC2S${stage}.ZDL"
             STAGE="$stage" python3 - <<'PY'
@@ -115,8 +115,10 @@ jobs:
           from pathlib import Path
           a = Path('dist/ZZC2S0.ZDL').read_bytes()
           b = Path('dist/ZZC2S2.ZDL').read_bytes()
-          assert a != b, 'Stage 2 output is identical to bypass-only stage 0'
+          middle = Path('dist/ZZC2S1.ZDL').read_bytes()
+          assert a != middle and middle != b and a != b, 'Diagnostic and audio stages must differ'
           print('Stage 0 SHA256:', hashlib.sha256(a).hexdigest())
+          print('Stage 1 SHA256:', hashlib.sha256(middle).hexdigest())
           print('Stage 2 SHA256:', hashlib.sha256(b).hexdigest())
           print('Distinct stage 2 DSP build confirmed structurally, not audibly')
           PY
@@ -124,7 +126,7 @@ jobs:
           import hashlib, json
           from pathlib import Path
           outputs = {}
-          for stage in (0, 2):
+          for stage in (0, 1, 2):
               data = Path(f'dist/ZZC2S{stage}.ZDL').read_bytes()
               outputs[str(stage)] = {'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest()}
           Path('zezo-ce2-build-report.json').write_text(
