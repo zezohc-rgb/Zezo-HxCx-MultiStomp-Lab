@@ -38,6 +38,12 @@ class ELFLoadPlanTests(unittest.TestCase):
         with self.assertRaises(ELFInspectionError):
             plan_elf32_sections(fixture(bad_alignment=True))
 
+    def test_non_c6000_elf_rejected(self):
+        data = bytearray(fixture())
+        struct.pack_into('<H', data, 18, 3)
+        with self.assertRaises(ELFInspectionError):
+            plan_elf32_sections(bytes(data))
+
     def test_truncated_rejected(self):
         with self.assertRaises(ELFInspectionError):
             plan_elf32_sections(b'bad')
