@@ -53,8 +53,8 @@ jobs:
           echo "Installer logs:"
           find /tmp /home/runner -maxdepth 4 -iname '*install*.log' -type f -print 2>/dev/null | head -15 || true
           test "$install_rc" -eq 0
-          test -x /tmp/ti-cgt-c6000/bin/cl6x
-          /tmp/ti-cgt-c6000/bin/cl6x --version
-          /tmp/ti-cgt-c6000/bin/cl6x --c99 --opt_level=2 -mv6740 --abi=eabi --mem_model:data=far --define=ZEZO_STAGE=0 -c zezo-ce2/src/zezo_ce2/zezo_ce2.c --output_file=/tmp/zezo_ce2.obj
+          test -x /tmp/ti-cgt-c6000/ti-cgt-c6000_8.5.0.LTS/bin/cl6x
+          /tmp/ti-cgt-c6000/ti-cgt-c6000_8.5.0.LTS/bin/cl6x --version
+          /tmp/ti-cgt-c6000/ti-cgt-c6000_8.5.0.LTS/bin/cl6x --c99 --opt_level=2 -mv6740 --abi=eabi --mem_model:data=far --define=ZEZO_STAGE=0 -c zezo-ce2/src/zezo_ce2/zezo_ce2.c --output_file=/tmp/zezo_ce2.obj
           test -s /tmp/zezo_ce2.obj
           echo "TI compiler stage-0 object compiled; not a ZDL"
