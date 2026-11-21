@@ -26,3 +26,7 @@ Stop immediately if a stage fails. Do not infer that any gate passed without a r
 - TI C6000 build and structural ZDL packaging passed in CI run #94.
 - FXID 960 is absent from the reviewed upstream registry but is not globally guaranteed unique.
 - The DSP is CE-2-inspired, not a verified circuit-accurate Boss CE-2 reproduction.
+
+## Stereo input limitation and test
+
+The CE-2-style wet path now receives `(left + right) / 2`, while dry left/right remain separate. This fixes the earlier right-only input having no chorus, but opposite-polarity correlated stereo signals can cancel in the wet path. Check left-only, right-only, identical L/R and opposite-polarity L/R signals before claiming stereo compatibility. This is **not** a true two-channel chorus and should not be advertised as one.
