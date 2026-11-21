@@ -55,7 +55,9 @@ void Fx_DLY_ZezoCE2(unsigned int *ctx) {
  const float de=0.2832f,hp=0.01415f;
  const float phase_step=(0.30f+3.20f*rate)*0.000022675737f;
  for(int i=0;i<8;i++){
-   float l=buf[i],r=buf[i+8],input=l;
+   /* CE-2-style mono wet path: fold down stereo input so right-only
+    * sources also feed modulation; preserve independent dry L/R paths. */
+   float l=buf[i],r=buf[i+8],input=0.5f*(l+r);
    float phase=s->phase;
    if(!(phase>=0.0f && phase<1.0f)) { phase=0.0f; s->phase=0.0f; }
    float tri=phase<0.5f?(-1.0f+4.0f*phase):(3.0f-4.0f*phase);
