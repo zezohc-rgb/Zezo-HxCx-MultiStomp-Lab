@@ -5,6 +5,7 @@ from pathlib import Path
 HERE=Path(__file__).resolve().parent
 ROOT=HERE.parent.parent
 sys.path.insert(0,str(ROOT/'build'))
+sys.path.insert(0,str(HERE.parent/'common'))
 m=json.loads((HERE/'manifest.json').read_text())
 if os.environ.get('ZEZO_FXID_REVIEWED') != str(m['fxid']):
     raise SystemExit('BLOCKED: independently review FXID collision before build')
