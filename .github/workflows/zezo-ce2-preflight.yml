@@ -63,3 +63,35 @@ jobs:
             test -s "/tmp/zezo_ce2_stage${stage}.obj"
             echo "TI compiler stage-$stage object compiled; not a ZDL"
           done
+      - name: Exercise upstream ZDL linker with disposable diagnostic ID (never publish)
+        shell: bash
+        env:
+          TI_CGT_ROOT: /tmp/ti-cgt-c6000/ti-cgt-c6000_8.5.0.LTS
+          ZEZO_STAGE: '0'
+          ZEZO_FXID_REVIEWED: '65535'
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/repeat98/ZoomMultistompZDL.git /tmp/ZoomMultistompZDL
+          mkdir -p /tmp/ZoomMultistompZDL/src/zezo_ce2
+          cp zezo-ce2/src/zezo_ce2/* /tmp/ZoomMultistompZDL/src/zezo_ce2/
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('/tmp/ZoomMultistompZDL/src/zezo_ce2/manifest.json')
+          m=json.loads(p.read_text())
+          m['fxid']=65535  # deliberately invalid for release; diagnostic only
+          p.write_text(json.dumps(m))
+          PY
+          trap 'rm -f /tmp/ZoomMultistompZDL/dist/ZZC2S0.ZDL' EXIT
+          cd /tmp/ZoomMultistompZDL
+          python3 src/zezo_ce2/build.py
+          test -s dist/ZZC2S0.ZDL
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('dist/ZZC2S0.ZDL')
+          b=p.read_bytes()
+          assert len(b) <= 32126
+          assert b[60] == 8
+          assert int.from_bytes(b[64:66], 'little') == 65535
+          print('Disposable stage-0 ZDL linked and header checked; NOT safe to install')
+          PY
