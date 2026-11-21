@@ -15,15 +15,15 @@ class BuildGuardTests(unittest.TestCase):
         env.update(env_updates)
         return subprocess.run([sys.executable, str(BUILD)], capture_output=True, text=True, env=env)
 
-    def test_colliding_release_id_is_rejected(self):
+    def test_wrong_review_token_is_rejected(self):
         result = self.invoke(ZEZO_FXID_REVIEWED="405")
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("collides with Room", result.stderr + result.stdout)
+        self.assertIn("independently review FXID", result.stderr + result.stdout)
 
     def test_no_review_token_is_rejected(self):
         result = self.invoke()
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("collides with Room", result.stderr + result.stdout)
+        self.assertIn("independently review FXID", result.stderr + result.stdout)
 
 if __name__ == "__main__":
     unittest.main()
