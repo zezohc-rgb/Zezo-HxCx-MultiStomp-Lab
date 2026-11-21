@@ -136,5 +136,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: zezo-ce2-build-report
-          path: zezo-ce2-build-report.json
+          path: /tmp/ZoomMultistompZDL/zezo-ce2-build-report.json
           retention-days: 7
+          if-no-files-found: error
