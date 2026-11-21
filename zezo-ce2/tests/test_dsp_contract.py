@@ -39,9 +39,9 @@ class DSPContractTests(unittest.TestCase):
         self.assertIn("norm(params[6])", DSP)
         self.assertIn("buf[i]=1.115f*(0.65f*l+0.35f*wet)", DSP)
         self.assertIn("buf[i+8]=1.115f*(0.65f*r+0.35f*wet)", DSP)
-        # This is intentionally a mono-derived wet signal. Right-only inputs
-        # currently have no wet modulation; full stereo processing is NOT claimed.
-        self.assertIn("input=l", DSP)
+        # The CE-2-style mono wet signal is now fed by both inputs; dry L/R
+        # paths remain separate. This is not independent stereo chorus DSP.
+        self.assertIn("input=0.5f*(l+r)", DSP)
 
 
 if __name__ == "__main__":
