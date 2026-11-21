@@ -13,6 +13,9 @@ typedef struct {
  float phase, pre_shelf, pre1,pre2,pre3,post1,post2,post3,de_shelf,wet_lp;
 } State;
 static inline float clamp(float x) { if (!(x>=0.0f)) return 0.0f; if(x>1.0f)return 1.0f; return x; }
+/* Own-runtime knobs are observed as normalized 0..1 on hardware in the upstream
+ * StereoChorus port. 1..100 is retained only as a defensive fallback; do NOT
+ * apply the legacy 0..0.14 GAIN-probe scaling here. CE-2 hardware test pending. */
 static inline float norm(float x) { if(!(x>=0.0f&&x<=100.0f))return 0.5f; return x<=1.0f?x:clamp(x*0.01f); }
 void Fx_DLY_ZezoCE2(unsigned int *ctx) {
  float *params=ZPTR(float *,ctx[1]);
