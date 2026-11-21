@@ -1,0 +1,44 @@
+name: Build Ziddle offline renderer (Windows)
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/ziddle-windows-build.yml'
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - name: Download exact source ZIP and verify SHA-256
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $url = 'https://berbasoft.com/ziddle/ziddle-1794645921.zip'
+          Invoke-WebRequest -Uri $url -OutFile ziddle.zip
+          $expected = '96d083ab78d6b8c6336a11adcc042044d6f255ba2e81dfa79210a6591e984502'
+          $actual = (Get-FileHash ziddle.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $expected) { throw "Source ZIP SHA256 mismatch: $actual" }
+          Expand-Archive ziddle.zip -DestinationPath source
+      - name: Build offline ZDL renderer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $manifest = Get-ChildItem source -Recurse -Filter Cargo.toml -File | Where-Object {
+            $_.FullName -match '[\\/]ziddle[\\/]Cargo.toml$'
+          } | Select-Object -First 1
+          if (-not $manifest) { throw 'Ziddle workspace not found' }
+          Push-Location $manifest.DirectoryName
+          try {
+            cargo build --locked --release -p ziddle-cli --bin ziddle
+            if ($LASTEXITCODE -ne 0) { throw "Cargo failed: $LASTEXITCODE" }
+            .\target\release\ziddle.exe effect render --help
+            if ($LASTEXITCODE -ne 0) { throw "CLI help failed: $LASTEXITCODE" }
+            Copy-Item .\target\release\ziddle.exe "$env:GITHUB_WORKSPACE\ziddle.exe"
+          } finally { Pop-Location }
+      - name: Publish Windows executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: ziddle-windows-renderer
+          path: ziddle.exe
+          if-no-files-found: error
