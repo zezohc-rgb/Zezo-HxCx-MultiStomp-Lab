@@ -1,0 +1,31 @@
+name: Audio and emulator bridge regression tests
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'multistomp_lab/audio_offline.py'
+      - 'multistomp_lab/ziddle_check.py'
+      - 'tests/test_audio_offline.py'
+      - 'tests/test_ziddle_check.py'
+      - '.github/workflows/audio-regression.yml'
+  workflow_dispatch:
+
+jobs:
+  regression:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ['3.11']
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Run offline PCM and Ziddle command tests
+        run: python -m unittest discover -s tests -p "test_audio_offline.py" -v
+      - name: Run Ziddle bridge tests
+        run: python -m unittest discover -s tests -p "test_ziddle_check.py" -v
+      - name: Report scope
+        run: python -c "print('PASS means WAV bypass and emulator CLI bridge only; ZDL DSP and ASIO remain untested')"
