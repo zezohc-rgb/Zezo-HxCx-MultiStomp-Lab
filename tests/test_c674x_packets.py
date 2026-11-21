@@ -17,7 +17,7 @@ class PacketGroupingTests(unittest.TestCase):
     def test_cross_fetch_boundary(self):
         data = binary(*([0] * 7), 1) + binary(*([0] * 8))
         groups = group_execute_packets(data)
-        self.assertEqual([len(x) for x in groups][-9:], [2] + [1] * 7)
+        self.assertEqual([len(x) for x in groups][-8:], [2] + [1] * 7)
 
     def test_compact_header_rejected(self):
         with self.assertRaises(UnsupportedPacket):
