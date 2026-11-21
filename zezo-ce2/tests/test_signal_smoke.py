@@ -43,6 +43,19 @@ class SignalSmokeTests(unittest.TestCase):
             y=render(rate,depth)
             self.assertTrue(all(math.isfinite(v) for v in y))
             self.assertLess(max(map(abs,y)),1.0)
+    def test_output_rms_and_rate_response(self):
+        def rms(values):
+            return math.sqrt(sum(v*v for v in values)/len(values))
+        input_rms=.15/math.sqrt(2)
+        for rate,depth in ((0,0),(.5,.5),(1,1)):
+            y=render(rate,depth)[1024:]
+            gain_db=20*math.log10(rms(y)/input_rms)
+            self.assertTrue(math.isfinite(gain_db))
+            self.assertGreater(gain_db,-12)
+            self.assertLess(gain_db,6)
+        slow=render(0,1)
+        fast=render(1,1)
+        self.assertGreater(sum(abs(a-b) for a,b in zip(slow,fast)),.01)
     def test_depth_changes_signal(self):
         dry=render(.5,0)
         mod=render(.5,1)
