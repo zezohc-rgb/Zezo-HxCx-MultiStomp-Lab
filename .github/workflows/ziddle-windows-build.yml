@@ -25,7 +25,24 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $manifest = Get-ChildItem source -Recurse -Filter Cargo.toml -File | Where-Object {
-            $_.FullName -match '[\\/]ziddle[\\/]Cargo.toml$'
+            $_.FullName -match '[\\/]ziddle-1794645921[\\/]Cargo.toml
+          } | Select-Object -First 1
+          if (-not $manifest) { throw 'Ziddle workspace not found' }
+          Push-Location $manifest.DirectoryName
+          try {
+            cargo build --locked --release -p ziddle-cli --bin ziddle --no-default-features
+            if ($LASTEXITCODE -ne 0) { throw "Cargo failed: $LASTEXITCODE" }
+            .\target\release\ziddle.exe effect render --help
+            if ($LASTEXITCODE -ne 0) { throw "CLI help failed: $LASTEXITCODE" }
+            Copy-Item .\target\release\ziddle.exe "$env:GITHUB_WORKSPACE\ziddle.exe"
+          } finally { Pop-Location }
+      - name: Publish Windows executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: ziddle-windows-renderer
+          path: ziddle.exe
+          if-no-files-found: error
+
           } | Select-Object -First 1
           if (-not $manifest) { throw 'Ziddle workspace not found' }
           Push-Location $manifest.DirectoryName
