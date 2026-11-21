@@ -26,7 +26,7 @@ void Fx_DLY_ZezoCE2(unsigned int *ctx) {
  if(!desc)return;
  uintptr_t base=(uintptr_t)desc[0],end=(uintptr_t)desc[1];
  uint32_t span=desc[2];
- if(!base||end<=base||(base&3u)||(end&3u)||(span&3u))return;
+ if(!base||end<=base||(base&3u)||(end&3u))return;
  if(end-base<sizeof(State)+N*sizeof(float)+8u||span<end-base||span>0x800000u||end-base>0x800000u)return;
  uintptr_t aligned=(base+3u)&~(uintptr_t)3u;
  uintptr_t delay_start=(aligned+sizeof(State)+3u)&~(uintptr_t)3u;
