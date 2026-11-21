@@ -72,6 +72,7 @@ jobs:
           TI_CGT: /tmp/ti-cgt-c6000/ti-cgt-c6000_8.5.0.LTS
           ZEZO_STAGE: '2'
           ZEZO_FXID_REVIEWED: '65535'
+          ZEZO_DIAGNOSTIC_BUILD: '1'
           ZDL_OWN_RUNTIME: '1'
         run: |
           set -euo pipefail
