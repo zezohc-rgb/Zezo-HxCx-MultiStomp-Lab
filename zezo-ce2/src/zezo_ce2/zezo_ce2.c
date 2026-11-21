@@ -65,7 +65,11 @@ void Fx_DLY_ZezoCE2(unsigned int *ctx) {
    s->pre1+=aa*(pre-s->pre1);s->pre2+=aa*(s->pre1-s->pre2);
    s->pre3+=aa3*(s->pre2-s->pre3);
    delay[s->write]=s->pre3;
-   uint32_t whole=(uint32_t)d;
+   /* d is clamped to [128,256]: extract its positive IEEE-754 integer part without TI RTS __c6xabi_fixfu. */
+   union { float f; uint32_t bits; } dbits;
+   dbits.f=d;
+   uint32_t exponent=(dbits.bits>>23)&255u;
+   uint32_t whole=((dbits.bits&0x7fffffu)|0x800000u)>>(150u-exponent);
    float frac=d-(float)whole;
    uint32_t a=(s->write+N-whole)&(N-1u),b=(a+N-1u)&(N-1u);
    float wet=delay[a]*(1.0f-frac)+delay[b]*frac;
