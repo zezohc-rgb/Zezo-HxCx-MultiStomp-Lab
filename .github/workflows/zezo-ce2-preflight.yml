@@ -102,7 +102,7 @@ jobs:
           elf_size = int.from_bytes(b[16:20], 'little')
           elf_start = 20 + header_size
           assert elf_start + elf_size <= len(b)
-          assert b[elf_start:elf_start+4] == b'\\x7fELF'
+          assert b[elf_start:elf_start+4] == bytes([127]) + b'ELF'
           print(f'Stage {stage}: ZDL wrapper and ELF validated structurally; NO audio or hardware validation')
           PY
           done
