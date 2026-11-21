@@ -46,6 +46,40 @@ jobs:
               if not cargo:
                   raise SystemExit("No Cargo manifests")
           PY
+      - name: Extract source and check Rust workspace metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ziddle-extracted
+          python - <<'PY'
+          import pathlib, zipfile
+          dest = pathlib.Path("ziddle-extracted").resolve()
+          with zipfile.ZipFile("ziddle-source.zip") as archive:
+              for member in archive.infolist():
+                  path = (dest / member.filename).resolve()
+                  if not path.is_relative_to(dest):
+                      raise SystemExit("Unsafe archive path")
+                  if member.is_dir():
+                      path.mkdir(parents=True, exist_ok=True)
+                  else:
+                      path.parent.mkdir(parents=True, exist_ok=True)
+                      with archive.open(member) as source, path.open("wb") as output:
+                          import shutil
+                          shutil.copyfileobj(source, output)
+          manifests = list(dest.rglob("Cargo.toml"))
+          roots = [p for p in manifests if p.parent.name not in ("cpu", "emu", "formats")]
+          if not roots:
+              raise SystemExit("No candidate Rust workspace root")
+          print("Candidate Cargo manifests:", *roots[:10], sep="\\n")
+          PY
+          ROOT=$(find ziddle-extracted -name Cargo.toml -not -path '*/product/*' | head -n 1)
+          if [ -z "$ROOT" ]; then
+            echo "No top-level Cargo.toml found; cannot verify workspace" >&2
+            exit 1
+          fi
+          cd "$(dirname "$ROOT")"
+          cargo metadata --no-deps --format-version 1 > /dev/null
+          echo "Cargo workspace metadata validated (not compiled)"
       - name: Report source integrity (no binaries)
         shell: bash
         run: echo "Source ZIP validated; emulation and Windows audio remain untested."
