@@ -138,6 +138,34 @@ jobs:
               json.dumps({'hardware_tested': False, 'audio_tested': False,
                           'disposable_fxid': 65535, 'stages': outputs}, indent=2) + '\n')
           PY
+      - name: Check candidate FXID 960 packaging without publishing binary
+        shell: bash
+        env:
+          TI_CGT_ROOT: /tmp/ti-cgt-c6000/ti-cgt-c6000_8.5.0.LTS
+          TI_CGT: /tmp/ti-cgt-c6000/ti-cgt-c6000_8.5.0.LTS
+          ZEZO_FXID_REVIEWED: '960'
+          ZDL_OWN_RUNTIME: '1'
+        run: |
+          set -euo pipefail
+          cd /tmp/ZoomMultistompZDL
+          trap 'rm -f dist/ZZC2S2.ZDL' EXIT
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('src/zezo_ce2/manifest.json')
+          m=json.loads(p.read_text())
+          m['fxid']=960
+          p.write_text(json.dumps(m))
+          PY
+          ZEZO_STAGE=2 python3 src/zezo_ce2/build.py
+          python3 - <<'PY'
+          from pathlib import Path
+          b=Path('dist/ZZC2S2.ZDL').read_bytes()
+          assert b[60] == 8
+          assert int.from_bytes(b[64:66], 'little') == 960
+          assert len(b) <= 32126
+          print('Candidate FXID 960 packaged structurally, NOT hardware validated')
+          PY
       - name: Upload diagnostic metadata only (no unvalidated ZDL)
         if: success()
         uses: actions/upload-artifact@v4
