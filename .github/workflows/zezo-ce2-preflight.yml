@@ -120,3 +120,21 @@ jobs:
           print('Stage 2 SHA256:', hashlib.sha256(b).hexdigest())
           print('Distinct stage 2 DSP build confirmed structurally, not audibly')
           PY
+          python3 - <<'PY'
+          import hashlib, json
+          from pathlib import Path
+          outputs = {}
+          for stage in (0, 2):
+              data = Path(f'dist/ZZC2S{stage}.ZDL').read_bytes()
+              outputs[str(stage)] = {'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest()}
+          Path('zezo-ce2-build-report.json').write_text(
+              json.dumps({'hardware_tested': False, 'audio_tested': False,
+                          'disposable_fxid': 65535, 'stages': outputs}, indent=2) + '\\n')
+          PY
+      - name: Upload diagnostic metadata only (no unvalidated ZDL)
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zezo-ce2-build-report
+          path: zezo-ce2-build-report.json
+          retention-days: 7
