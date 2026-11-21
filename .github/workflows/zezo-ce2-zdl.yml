@@ -35,11 +35,11 @@ jobs:
           file /tmp/ti-cgt.bin
           chmod +x /tmp/ti-cgt.bin
           /tmp/ti-cgt.bin --mode unattended --prefix /tmp/ti-cgt-c6000
-          test -x /tmp/ti-cgt-c6000/bin/cl6x
-          /tmp/ti-cgt-c6000/bin/cl6x --version
+          test -x /tmp/ti-cgt-c6000/ti-cgt-c6000_8.5.0.LTS/bin/cl6x
+          /tmp/ti-cgt-c6000/ti-cgt-c6000_8.5.0.LTS/bin/cl6x --version
       - name: Build with upstream ZoomMultistompZDL linker
         env:
-          TI_CGT_ROOT: /tmp/ti-cgt-c6000
+          TI_CGT_ROOT: /tmp/ti-cgt-c6000/ti-cgt-c6000_8.5.0.LTS
           ZEZO_STAGE: ${{ inputs.stage }}
           ZEZO_FXID_REVIEWED: ${{ inputs.reviewed_fxid }}
         run: |
