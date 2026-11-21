@@ -4,6 +4,7 @@ on:
     branches: [main]
     paths:
       - 'multistomp_lab/**'
+      - 'run_desktop.py'
       - '.github/workflows/windows-desktop.yml'
   workflow_dispatch:
 
@@ -23,7 +24,7 @@ jobs:
       - name: Build desktop inspector executable
         shell: pwsh
         run: |
-          python -m PyInstaller --noconfirm --clean --onefile --windowed --name Zezo-MultiStomp-Inspector --collect-submodules multistomp_lab multistomp_lab/desktop.py
+          python -m PyInstaller --noconfirm --clean --onefile --windowed --name Zezo-MultiStomp-Inspector --collect-submodules multistomp_lab run_desktop.py
           if (-not (Test-Path dist/Zezo-MultiStomp-Inspector.exe)) { throw "EXE not produced" }
       - name: Publish Windows executable (inspection only)
         uses: actions/upload-artifact@v4
