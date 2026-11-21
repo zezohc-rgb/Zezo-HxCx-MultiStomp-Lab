@@ -27,7 +27,7 @@ jobs:
           assert m['effect_name']=='ZezoCE2'
           assert m['audio_func_name']=='Fx_DLY_ZezoCE2'
           assert [x['name'] for x in m['params']]==['Rate','Depth']
-          assert m['fxid']==405, 'provisional ID changed: review before testing'
+          assert m['fxid']==960, 'provisional candidate ID changed: review before testing'
           builder=(p/'build.py').read_text()
           assert "m['gid'] == 8 and m['fxid'] == 405" in builder, 'collision guard removed'
           assert "ZEZO_DIAGNOSTIC_BUILD" in builder, 'diagnostic guard removed'
