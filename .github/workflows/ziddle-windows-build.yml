@@ -23,7 +23,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $root = Join-Path $env:GITHUB_WORKSPACE 'source\ziddle-1794645921'
+          $root = Join-Path $env:GITHUB_WORKSPACE 'source/ziddle-1794645921'
           if (-not (Test-Path (Join-Path $root 'Cargo.toml'))) { throw 'Workspace Cargo.toml missing' }
           Push-Location $root
           try {
