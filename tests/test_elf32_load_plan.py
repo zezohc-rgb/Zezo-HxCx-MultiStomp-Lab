@@ -9,7 +9,7 @@ def fixture(overlap=False, huge=False, bad_alignment=False):
     struct.pack_into('<HHIIIIIHHHHHH', b, 16,
                      3, 140, 1, 0, 0, 52, 0, 52, 0, 0, 40, 3, 0)
     struct.pack_into('<IIIIIIIIII', b, 92, 0, 1, 6, 0x1000,
-                     192, 32, 0, 0, 64 if bad_alignment else 32, 0)
+                     192, 32, 0, 0, 8192 if bad_alignment else 32, 0)
     struct.pack_into('<IIIIIIIIII', b, 132, 0, 8, 3,
                      0x1010 if overlap else 0x2000,
                      0, 0xffffffff if huge else 64, 0, 0, 32, 0)
