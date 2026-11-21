@@ -63,11 +63,11 @@ jobs:
             test -s "/tmp/zezo_ce2_stage${stage}.obj"
             echo "TI compiler stage-$stage object compiled; not a ZDL"
           done
-      - name: Exercise upstream ZDL linker with disposable diagnostic ID (never publish)
+      - name: Link diagnostic stage 0 and audio stage 2 ZDLs (never publish)
         shell: bash
         env:
           TI_CGT_ROOT: /tmp/ti-cgt-c6000/ti-cgt-c6000_8.5.0.LTS
-          ZEZO_STAGE: '0'
+          ZEZO_STAGE: '2'
           ZEZO_FXID_REVIEWED: '65535'
         run: |
           set -euo pipefail
@@ -82,16 +82,27 @@ jobs:
           m['fxid']=65535  # deliberately invalid for release; diagnostic only
           p.write_text(json.dumps(m))
           PY
-          trap 'rm -f /tmp/ZoomMultistompZDL/dist/ZZC2S0.ZDL' EXIT
+          trap 'rm -f /tmp/ZoomMultistompZDL/dist/ZZC2S0.ZDL /tmp/ZoomMultistompZDL/dist/ZZC2S2.ZDL' EXIT
           cd /tmp/ZoomMultistompZDL
-          python3 src/zezo_ce2/build.py
-          test -s dist/ZZC2S0.ZDL
-          python3 - <<'PY'
+          for stage in 0 2; do
+            ZEZO_STAGE="$stage" python3 src/zezo_ce2/build.py
+            test -s "dist/ZZC2S${stage}.ZDL"
+            STAGE="$stage" python3 - <<'PY'
+          import os
           from pathlib import Path
-          p=Path('dist/ZZC2S0.ZDL')
-          b=p.read_bytes()
-          assert len(b) <= 32126
+          stage = int(os.environ['STAGE'])
+          p = Path(f'dist/ZZC2S{stage}.ZDL')
+          b = p.read_bytes()
+          assert len(b) <= 32126, 'ZDL exceeds hardware size limit'
+          assert b[:8] == bytes(4) + b'SIZE'
+          assert b[20:24] == b'INFO'
           assert b[60] == 8
           assert int.from_bytes(b[64:66], 'little') == 65535
-          print('Disposable stage-0 ZDL linked and header checked; NOT safe to install')
+          header_size = int.from_bytes(b[12:16], 'little')
+          elf_size = int.from_bytes(b[16:20], 'little')
+          elf_start = 20 + header_size
+          assert elf_start + elf_size <= len(b)
+          assert b[elf_start:elf_start+4] == b'\\x7fELF'
+          print(f'Stage {stage}: ZDL wrapper and ELF validated structurally; NO audio or hardware validation')
           PY
+          done
