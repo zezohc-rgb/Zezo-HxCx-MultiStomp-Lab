@@ -69,6 +69,7 @@ jobs:
           TI_CGT_ROOT: /tmp/ti-cgt-c6000/ti-cgt-c6000_8.5.0.LTS
           ZEZO_STAGE: '2'
           ZEZO_FXID_REVIEWED: '65535'
+          ZDL_OWN_RUNTIME: '1'
         run: |
           set -euo pipefail
           git clone --depth 1 https://github.com/repeat98/ZoomMultistompZDL.git /tmp/ZoomMultistompZDL
@@ -84,6 +85,7 @@ jobs:
           PY
           trap 'rm -f /tmp/ZoomMultistompZDL/dist/ZZC2S0.ZDL /tmp/ZoomMultistompZDL/dist/ZZC2S2.ZDL' EXIT
           cd /tmp/ZoomMultistompZDL
+          echo 'Using upstream own runtime for knob handlers; no stock LineSel handler blob'
           for stage in 0 2; do
             ZEZO_STAGE="$stage" python3 src/zezo_ce2/build.py
             test -s "dist/ZZC2S${stage}.ZDL"
