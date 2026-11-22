@@ -31,6 +31,17 @@ jobs:
         run: |
           & ./ziddle.exe plugin build --help | Out-File -Encoding utf8 plugin-build-help.txt
           if ($LASTEXITCODE -ne 0) { throw "Plugin build command failed: $LASTEXITCODE" }
+      - name: Verify plugin command and Windows binary signatures
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $help = Get-Content plugin-build-help.txt -Raw
+          if ($help -notmatch 'PATCH' -or $help -notmatch 'OUT_DIR') { throw 'Plugin build help missing PATCH or OUT_DIR' }
+          foreach ($file in @('ziddle.exe', 'ziddle_vst3_headless.dll')) {
+            $bytes = [IO.File]::ReadAllBytes((Resolve-Path $file))
+            if ($bytes.Length -lt 1024 -or $bytes[0] -ne 77 -or $bytes[1] -ne 90) { throw "Invalid Windows PE binary: $file" }
+          }
+          Write-Output 'Ziddle CLI, VST3 library and plugin build command verified'
       - name: Upload VST3 build prerequisites
         uses: actions/upload-artifact@v4
         with:
