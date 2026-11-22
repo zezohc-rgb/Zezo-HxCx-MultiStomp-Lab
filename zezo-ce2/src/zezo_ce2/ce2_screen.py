@@ -24,7 +24,6 @@ def make_ce2_screen():
     for x in (38,90):
         c.filled_circle(x,20,12)
         c.circle(x,20,13)
-        c.circle(x,20,10,0)
         c.vline(x-1,10,19,0); c.vline(x,10,19,0)
         c.hline(x-3,x+3,12,0)
         for dx,dy in ((-17,0),(17,0),(-12,-11),(12,-11)):
@@ -34,9 +33,9 @@ def make_ce2_screen():
     c.draw_text("RATE",25,33)
     c.draw_text("DEPTH",78,33)
     c.hline(15,112,40)
-    c.draw_text("CE-2",39,42,scale=3,spacing=2)
+    c.draw_text("CE-2",44,42,scale=2,spacing=2)
     c.hline(15,112,61)
     # Small chorus designation above the firmware value area.
-    c.draw_text("CHORUS",51,57)
+    c.draw_text("CHORUS",51,56)
     # Firmware will overlay value rectangles in the lower half.
     return encode_zoom_rle(c)
