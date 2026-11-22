@@ -21,7 +21,7 @@ jobs:
         shell: pwsh
         run: |
           Push-Location source/ziddle-1794645921
-          cargo build --locked --release -p ziddle-vst3-headless -p ziddle-cli --no-default-features
+          cargo build --locked --release -p ziddle-vst3-headless -p ziddle-cli --no-default-features --features ziddle-cli/plugin,ziddle-cli/documents,ziddle-cli/inspect
           if ($LASTEXITCODE -ne 0) { throw "Rust build failed: $LASTEXITCODE" }
           Copy-Item target/release/ziddle.exe ../../ziddle.exe
           Copy-Item target/release/ziddle_vst3_headless.dll ../../ziddle_vst3_headless.dll
