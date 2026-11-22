@@ -78,8 +78,34 @@ static int impulse_peak(float depth, float phase)
     return peak_index;
 }
 
+static void check_circuit_models(void)
+{
+    const double pi = 3.141592653589793;
+    for (int hz = 1000; hz <= 17000; hz += 1000) {
+        double omega = 2.0 * 44100.0 * tan(pi * hz / 44100.0);
+        double real = 1.0 - 1.081e-9 * omega * omega;
+        double imag = omega * (4.71e-5 - 1.27182e-14 * omega * omega);
+        double expected = 1.0 / hypot(real, imag);
+        BbdFilter state = {0};
+        double energy = 0;
+        for (int i = 0; i < 45080; ++i) {
+            float y = bbd_filter(&state, sin(2.0 * pi * hz * i / 44100.0));
+            if (i >= 980)
+                energy += y * y;
+        }
+        assert(fabs(sqrt(2.0 * energy / 44100.0) - expected) < 1e-5);
+    }
+    for (int i = -100; i <= 100; ++i) {
+        float lfo = i * 0.01f;
+        double expected = 171.99 + 318.36672 * log1p(-0.11 * lfo);
+        assert(fabs(bbd_delay(1.0f, lfo) - expected) < 0.0001);
+        assert(bbd_delay(0.0f, lfo) == 171.99f);
+    }
+}
+
 int main(void)
 {
+    check_circuit_models();
     ctx[1] = address(params);
     ctx[3] = address(desc);
     ctx[5] = address(audio);
@@ -107,7 +133,7 @@ int main(void)
     assert(mid > 0.02f && peak < 0.11f);
     assert(render(0.5f, 0.0f, 440.0f, 0.1f, 1, &peak) > 0.4f * mid);
     assert(render(0.5f, 1.0f, 440.0f, 0.1f, 2, &peak) < 1e-6f);
-    assert(render(0.5f, 0.0f, 6000.0f, 0.1f, 0, &peak) < 0.6f * mid);
+    assert(render(0.5f, 0.0f, 10000.0f, 0.1f, 0, &peak) < 0.6f * mid);
     assert(render(0.5f, 0.0f, 10.0f, 0.1f, 0, &peak) < 0.2f * mid);
 
     float small = render(0.0f, 0.0f, 2200.0f, 0.05f, 0, &peak);
@@ -115,17 +141,17 @@ int main(void)
     assert(render(0.0f, 0.0f, 2200.0f, 1.0f, 0, &peak) < 18.0f * small);
 
     render(0.0f, 1.0f, 440.0f, 0.15f, 0, &peak);
-    assert(fabsf(memory.state.phase - 0.30f * 16384.0f / 44100.0f) < 0.001f);
+    assert(fabsf(memory.state.phase - (3.560606f / 11.0f) * 16384.0f / 44100.0f) < 0.001f);
     render(1.0f, 1.0f, 440.0f, 0.15f, 0, &peak);
-    assert(fabsf(memory.state.phase - (3.50f * 16384.0f / 44100.0f - 1.0f)) < 0.001f);
+    assert(fabsf(memory.state.phase - (3.560606f * 16384.0f / 44100.0f - 1.0f)) < 0.001f);
 
     int fixed = impulse_peak(0.0f, 0.0f);
     assert(fixed >= 172 && fixed < 182);
     assert(impulse_peak(0.0f, 0.5f) == fixed);
-    int shortest = impulse_peak(1.0f, 0.0f);
-    int longest = impulse_peak(1.0f, 0.5f);
-    assert(shortest >= 141 && shortest < 151);
-    assert(longest >= 220 && longest < 230);
+    int shortest = impulse_peak(1.0f, 0.5f);
+    int longest = impulse_peak(1.0f, 0.0f);
+    assert(shortest >= 135 && shortest < 145);
+    assert(longest >= 205 && longest < 215);
 
     reset(0.5f, 0.0f);
     params[5] = 1.0f;

@@ -1,23 +1,48 @@
 #include <stdint.h>
 #define ZPTR(type,w) ((type)(uintptr_t)(w))
 #define MAGIC 0x5A434533u
-#define VERSION 8u
+#define VERSION 9u
 #define N 1024u
 #define CLEAR_STEP 128u
 #ifndef ZEZO_STAGE
 #define ZEZO_STAGE 0
 #endif
 #pragma CODE_SECTION(Fx_DLY_ZezoCE2, ".audio")
+typedef struct { float pole, biquad1, biquad2; } BbdFilter;
 typedef struct {
  uint32_t magic, version, clear_index, ready, write;
- float phase, rate, depth, lfo, pre_shelf, input_lp, pre1,pre2,pre3;
- float bbd_lp, post1,post2,post3,wet_lp,de_shelf;
+ float phase, rate, depth, lfo, pre_shelf, input_lp;
+ float bbd_lp, wet_lp, de_shelf;
+ BbdFilter pre_filter, post_filter;
 } State;
 static inline float clamp(float x) { if (!(x>=0.0f)) return 0.0f; if(x>1.0f)return 1.0f; return x; }
 /* Own-runtime knobs are observed as normalized 0..1 on hardware in the upstream
  * StereoChorus port. 1..100 is retained only as a defensive fallback; do NOT
  * apply the legacy 0..0.14 GAIN-probe scaling here. CE-2 hardware test pending. */
 static inline float norm(float x) { if(!(x>=0.0f&&x<=100.0f))return 0.5f; return x<=1.0f?x:clamp(x*0.01f); }
+/* ET-50B Q2/Q3, unity-gain emitter follower approximation, 44.1 kHz.
+ * Bilinear transform of the 10 kΩ ladder with 3.3 nF to AC ground,
+ * 8.2 nF in feedback and 470 pF to AC ground at the follower input. */
+static inline float bbd_filter(BbdFilter *state, float input)
+{
+ float pole=0.0448633608f*input+state->pole;
+ state->pole=0.0448633608f*input+0.3609314595f*pole;
+ float output=pole+state->biquad1;
+ state->biquad1=2.0f*pole+0.8698551294f*output+state->biquad2;
+ state->biquad2=pole-0.4314645087f*output;
+ return output;
+}
+
+/* C22 charges exponentially through R38 to the MN3101 threshold.
+ * x is the reset voltage swing relative to the center-to-rail gap.
+ * CP1/CP2 divide the oscillator by two; the MN3007 delays 512 CP periods. */
+static inline float bbd_delay(float depth, float lfo)
+{
+ float x=0.11f*depth*lfo;
+ /* ln(1-x), with sub-0.00004 sample truncation error for |x| <= 0.11. */
+ float logarithm=-x*(1.0f+x*(0.5f+x*(0.33333333f+x*(0.25f+x*(0.2f+x*0.16666667f)))));
+ return 171.99f+318.36672f*logarithm;
+}
 void Fx_DLY_ZezoCE2(unsigned int *ctx) {
  float *params=ZPTR(float *,ctx[1]);
  float *buf=ZPTR(float *,ctx[5]);
@@ -40,8 +65,10 @@ void Fx_DLY_ZezoCE2(unsigned int *ctx) {
  if(s->magic!=MAGIC||s->version!=VERSION||s->clear_index>N||s->ready>1u||s->write>=N){
    s->magic=MAGIC;s->version=VERSION;s->clear_index=0;s->ready=0;s->write=0;
    s->phase=0.0f;s->rate=norm(params[5]);s->depth=norm(params[6]);
-   s->lfo=-1.0f;s->pre_shelf=0.0f;s->input_lp=0.0f;s->bbd_lp=0.0f;s->pre1=0.0f;s->pre2=0.0f;s->pre3=0.0f;
-   s->post1=0.0f;s->post2=0.0f;s->post3=0.0f;s->de_shelf=0.0f;s->wet_lp=0.0f;
+   s->lfo=-1.0f;s->pre_shelf=0.0f;s->input_lp=0.0f;s->bbd_lp=0.0f;
+   s->pre_filter.pole=0.0f;s->pre_filter.biquad1=0.0f;s->pre_filter.biquad2=0.0f;
+   s->post_filter.pole=0.0f;s->post_filter.biquad1=0.0f;s->post_filter.biquad2=0.0f;
+   s->de_shelf=0.0f;s->wet_lp=0.0f;
  }
  if(!s->ready){
    uint32_t stop=s->clear_index+CLEAR_STEP;
@@ -57,7 +84,6 @@ void Fx_DLY_ZezoCE2(unsigned int *ctx) {
   * C3/C15 = 6.8 nF, with 10 kΩ and (10+47) kΩ time constants. */
  const float fast=2.0f*44100.0f*10000.0f*6.8e-9f;
  const float slow=2.0f*44100.0f*57000.0f*6.8e-9f;
- const float aa=0.6097f, aa3=0.6254f;
  /* Matched RC poles at 44.1 kHz. See CE2-REFINEMENT.md. */
  const float input_hp=0.006848f, bbd_hp=0.002080f, mix_hp=0.015191f;
  const float lfo_lp=0.010254f;
@@ -70,28 +96,23 @@ void Fx_DLY_ZezoCE2(unsigned int *ctx) {
    if(!(phase>=0.0f && phase<1.0f)) { phase=0.0f; s->phase=0.0f; }
    s->rate+=slew*(rate-s->rate);
    s->depth+=slew*(depth-s->depth);
-   /* A slow-end taper gives more travel to subtle chorus settings. */
-   float hz=0.30f+3.20f*s->rate*(0.5f+0.5f*s->rate);
+   /* TL022 Schmitt/integrator, linear 100 kΩ VR1 over R31 (10 kΩ).
+    * R30/(4*C19*R29*R32) = 3.560606 Hz before divider loading. */
+   float hz=3.560606f*(1.0f+10.0f*s->rate)*0.090909091f;
    float tri=phase<0.5f?(-1.0f+4.0f*phase):(3.0f-4.0f*phase);
    s->phase=phase+hz*0.000022675737f;
    if(s->phase>=1.0f)s->phase-=1.0f;
-   /* BBD delay is inverse clock frequency. The product sums m^0..m^7
-    * with no division or TI runtime helper in the sample loop. */
    s->lfo+=lfo_lp*(tri-s->lfo);
-   float m=0.21794872f*s->depth*s->lfo;
-   float m2=m*m;
-   float d=171.99f*(1.0f+m)*(1.0f+m2)*(1.0f+m2*m2);
+   float d=bbd_delay(s->depth,s->lfo);
    if(!(d>=128.0f))d=128.0f;
    if(d>256.0f)d=256.0f;
    float pre=((1.0f+slow)/(1.0f+fast))*input+s->pre_shelf;
    s->pre_shelf=((1.0f-slow)/(1.0f+fast))*input-((1.0f-fast)/(1.0f+fast))*pre;
    s->input_lp+=input_hp*(pre-s->input_lp);
    pre-=s->input_lp;
-   s->pre1+=aa*(pre-s->pre1);s->pre2+=aa*(s->pre1-s->pre2);
-   s->pre3+=aa3*(s->pre2-s->pre3);
    /* Soft BBD headroom after pre-emphasis. Unity small-signal gain,
     * symmetric knee at 0.9 and continuous slope at both ends. */
-   float drive=s->pre3;
+   float drive=bbd_filter(&s->pre_filter,pre);
    float magnitude=drive<0.0f?-drive:drive;
    if(magnitude>0.9f){
      float t=clamp((magnitude-0.9f)*0.55555556f);
@@ -109,10 +130,9 @@ void Fx_DLY_ZezoCE2(unsigned int *ctx) {
    float wet=delay[a]*(1.0f-frac)+delay[b]*frac;
    s->bbd_lp+=bbd_hp*(wet-s->bbd_lp);
    wet-=s->bbd_lp;
-   s->post1+=aa*(wet-s->post1);s->post2+=aa*(s->post1-s->post2);
-   s->post3+=aa3*(s->post2-s->post3);
-   s->wet_lp+=mix_hp*(s->post3-s->wet_lp);
-   wet=s->post3-s->wet_lp;
+   wet=bbd_filter(&s->post_filter,wet);
+   s->wet_lp+=mix_hp*(wet-s->wet_lp);
+   wet-=s->wet_lp;
    float recovered=((1.0f+fast)/(1.0f+slow))*wet+s->de_shelf;
    s->de_shelf=((1.0f-fast)/(1.0f+slow))*wet-((1.0f-slow)/(1.0f+slow))*recovered;
    s->write=(s->write+1u)&(N-1u);
