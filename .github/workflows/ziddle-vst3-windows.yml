@@ -1,14 +1,21 @@
 name: Ziddle VST3 Windows build
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/ziddle-vst3-windows.yml'
+      - 'patches/ziddle-explicit-call-padding.patch'
   push:
     branches: [main]
-    paths: ['.github/workflows/ziddle-vst3-windows.yml']
+    paths:
+      - '.github/workflows/ziddle-vst3-windows.yml'
+      - 'patches/ziddle-explicit-call-padding.patch'
 jobs:
   build:
     runs-on: windows-latest
     timeout-minutes: 60
     steps:
+      - uses: actions/checkout@v4
       - name: Download verified Ziddle source
         shell: pwsh
         run: |
@@ -17,20 +24,47 @@ jobs:
           $hash = (Get-FileHash source.zip -Algorithm SHA256).Hash.ToLowerInvariant()
           if ($hash -ne '96d083ab78d6b8c6336a11adcc042044d6f255ba2e81dfa79210a6591e984502') { throw "Source hash mismatch: $hash" }
           Expand-Archive source.zip -DestinationPath source
+      - name: Apply Ziddle DSP call analysis fix
+        shell: pwsh
+        run: |
+          $patch = Join-Path $env:RUNNER_TEMP 'ziddle-explicit-call-padding.patch'
+          $text = [IO.File]::ReadAllText("$env:GITHUB_WORKSPACE/patches/ziddle-explicit-call-padding.patch")
+          [IO.File]::WriteAllText($patch, $text.Replace("`r`n", "`n"))
+          Push-Location source/ziddle-1794645921
+          git -c core.autocrlf=false apply --verbose --no-index $patch
+          if ($LASTEXITCODE -ne 0) { throw "Ziddle patch failed: $LASTEXITCODE" }
+          Pop-Location
       - name: Build VST3 engine and CLI
         shell: pwsh
         run: |
           Push-Location source/ziddle-1794645921
-          cargo build --locked --release -p ziddle-vst3-headless -p ziddle-cli --no-default-features --features ziddle-cli/plugin,ziddle-cli/documents,ziddle-cli/inspect
+          cargo build --locked --release --target x86_64-pc-windows-msvc -p ziddle-vst3-headless -p ziddle-cli --no-default-features --features ziddle-cli/plugin,ziddle-cli/documents,ziddle-cli/inspect
           if ($LASTEXITCODE -ne 0) { throw "Rust build failed: $LASTEXITCODE" }
-          Copy-Item target/release/ziddle.exe ../../ziddle.exe
-          Copy-Item target/release/ziddle_vst3_headless.dll ../../ziddle_vst3_headless.dll
+          Copy-Item target/x86_64-pc-windows-msvc/release/ziddle.exe ../../ziddle.exe
+          Copy-Item target/x86_64-pc-windows-msvc/release/ziddle_vst3_headless.dll ../../ziddle_vst3_headless.dll
           Pop-Location
-      - name: Check built binaries\n        shell: pwsh\n        run: |\n          if (-not (Test-Path ziddle.exe)) { throw "Missing ziddle.exe" }\n          if (-not (Test-Path ziddle_vst3_headless.dll)) { throw "Missing VST3 headless DLL" }\n          Get-Item ziddle.exe,ziddle_vst3_headless.dll | Select-Object Name,Length\n      - name: Record plugin builder usage
+      - name: Test VST3 adapter and offline renderer
         shell: pwsh
         run: |
-          & ./ziddle.exe plugin build --help | Out-File -Encoding utf8 plugin-build-help.txt
-          if ($LASTEXITCODE -ne 0) { throw "Plugin build command failed: $LASTEXITCODE" }
+          Push-Location source/ziddle-1794645921
+          cargo test --locked --release --target x86_64-pc-windows-msvc -p ziddle-c-lowering -p ziddle-vst3-adapter -p ziddle-vst3-headless -p ziddle-offline-renderer -p ziddle-cli --no-default-features --features ziddle-cli/plugin,ziddle-cli/documents,ziddle-cli/inspect
+          if ($LASTEXITCODE -ne 0) { throw "Rust tests failed: $LASTEXITCODE" }
+          Pop-Location
+      - name: Check built binaries
+        shell: pwsh
+        run: |
+          if (-not (Test-Path ziddle.exe)) { throw "Missing ziddle.exe" }
+          if (-not (Test-Path ziddle_vst3_headless.dll)) { throw "Missing VST3 headless DLL" }
+          Get-Item ziddle.exe,ziddle_vst3_headless.dll | Select-Object Name,Length
+      - name: Record plugin builder usage
+        shell: pwsh
+        run: |
+          $commands = @('plugin build', 'patch new', 'patch edit', 'patch render', 'firmware extract')
+          foreach ($command in $commands) {
+            $arguments = $command.Split(' ')
+            & ./ziddle.exe @arguments --help | Out-File -Encoding utf8 "$($arguments -join '-')-help.txt"
+            if ($LASTEXITCODE -ne 0) { throw "Help for $command failed: $LASTEXITCODE" }
+          }
       - name: Verify plugin command and Windows binary signatures
         shell: pwsh
         run: |
@@ -39,7 +73,14 @@ jobs:
           if ($help -notmatch 'PATCH' -or $help -notmatch 'OUT_DIR') { throw 'Plugin build help missing PATCH or OUT_DIR' }
           foreach ($file in @('ziddle.exe', 'ziddle_vst3_headless.dll')) {
             $bytes = [IO.File]::ReadAllBytes((Resolve-Path $file))
-            if ($bytes.Length -lt 1024 -or $bytes[0] -ne 77 -or $bytes[1] -ne 90) { throw "Invalid Windows PE binary: $file" }
+            if ($bytes.Length -lt 1024 -or $bytes[0] -ne 77 -or $bytes[1] -ne 90) { throw "Invalid DOS header: $file" }
+            $offset = [BitConverter]::ToInt32($bytes, 0x3c)
+            if ($offset -lt 64 -or $offset -gt ($bytes.Length - 26) -or
+                [BitConverter]::ToUInt32($bytes, $offset) -ne 0x4550 -or
+                [BitConverter]::ToUInt16($bytes, $offset + 4) -ne 0x8664 -or
+                [BitConverter]::ToUInt16($bytes, $offset + 24) -ne 0x20b) {
+              throw "Expected Windows x64 PE32+ binary: $file"
+            }
           }
           Write-Output 'Ziddle CLI, VST3 library and plugin build command verified'
       - name: Upload VST3 build prerequisites
@@ -49,5 +90,5 @@ jobs:
           path: |
             ziddle.exe
             ziddle_vst3_headless.dll
-            plugin-build-help.txt
+            *-help.txt
           if-no-files-found: error
