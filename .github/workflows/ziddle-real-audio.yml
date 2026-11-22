@@ -1,0 +1,75 @@
+name: Ziddle real audio smoke test
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/ziddle-real-audio.yml']
+jobs:
+  render:
+    runs-on: windows-latest
+    timeout-minutes: 50
+    steps:
+      - name: Download verified Ziddle and official Zoom firmware
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Invoke-WebRequest 'https://berbasoft.com/ziddle/ziddle-1794645921.zip' -OutFile ziddle.zip
+          if ((Get-FileHash ziddle.zip -Algorithm SHA256).Hash.ToLowerInvariant() -ne '96d083ab78d6b8c6336a11adcc042044d6f255ba2e81dfa79210a6591e984502') { throw 'Ziddle source hash mismatch' }
+          Invoke-WebRequest 'https://zoomcorp.com/documents/93/MS-70CDR_v2.10_Win_E.zip' -OutFile firmware.zip
+          Expand-Archive ziddle.zip -DestinationPath src
+          Expand-Archive firmware.zip -DestinationPath fw
+          $exe = Get-ChildItem fw -Recurse -File -Filter '*Updater.exe' | Select-Object -First 1
+          if (-not $exe) { throw 'Official Zoom updater missing' }
+          Copy-Item $exe.FullName updater.exe
+      - name: Build actual emulator
+        shell: pwsh
+        run: |
+          Push-Location src/ziddle-1794645921
+          cargo build --locked --release -p ziddle-cli --bin ziddle --no-default-features
+          if ($LASTEXITCODE -ne 0) { throw 'Cargo build failed' }
+          Copy-Item target/release/ziddle.exe ../../ziddle.exe
+          Pop-Location
+      - name: Get public open-source test effect and generate input
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Invoke-WebRequest 'https://raw.githubusercontent.com/matujuice/zoom-ms-zdl-effects-pack/main/dist/Spiral.ZDL' -OutFile effect.ZDL
+          $bytes = [IO.File]::ReadAllBytes('effect.ZDL')
+          if ($bytes.Length -lt 5000 -or [Text.Encoding]::ASCII.GetString($bytes,4,4) -ne 'SIZE') { throw 'Not a valid ZDL; upstream path may have changed' }
+          @'
+          import wave, math, struct
+          with wave.open("input.wav","wb") as w:
+              w.setnchannels(2);w.setsampwidth(2);w.setframerate(44100)
+              a=[]
+              for i in range(44100):
+                  s=round(12000*math.sin(2*math.pi*220*i/44100)*math.exp(-i/12000))
+                  a.extend((s,s))
+              w.writeframes(struct.pack("<"+"h"*len(a),*a))
+          '@ | Set-Content -Encoding utf8 make.py
+          python make.py
+      - name: Execute real ZDL audio rendering
+        shell: pwsh
+        run: |
+          & .\ziddle.exe effect render effect.ZDL input.wav output.wav --firmware updater.exe
+          if ($LASTEXITCODE -ne 0) { throw "Ziddle render failed ($LASTEXITCODE)" }
+          if (-not (Test-Path output.wav)) { throw 'No rendered output' }
+          @'
+          import wave
+          def read(path):
+              with wave.open(path,"rb") as w:
+                  return w.getparams(),w.readframes(w.getnframes())
+          a,x=read("input.wav");b,y=read("output.wav")
+          print("Input:",a,"Output:",b,"Different:",x!=y)
+          if x==y: raise SystemExit("Output identical to input")
+          '@ | Set-Content -Encoding utf8 compare.py
+          python compare.py
+          if ($LASTEXITCODE -ne 0) { throw 'Audio comparison failed' }
+      - name: Upload rendered WAV and diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ziddle-real-audio-test
+          path: |
+            input.wav
+            output.wav
+          if-no-files-found: warn
