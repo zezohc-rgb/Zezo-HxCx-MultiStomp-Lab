@@ -27,8 +27,11 @@ jobs:
       - name: Apply Ziddle DSP call analysis fix
         shell: pwsh
         run: |
+          $patch = Join-Path $env:RUNNER_TEMP 'ziddle-explicit-call-padding.patch'
+          $text = [IO.File]::ReadAllText("$env:GITHUB_WORKSPACE/patches/ziddle-explicit-call-padding.patch")
+          [IO.File]::WriteAllText($patch, $text.Replace("`r`n", "`n"))
           Push-Location source/ziddle-1794645921
-          git apply --no-index "$env:GITHUB_WORKSPACE/patches/ziddle-explicit-call-padding.patch"
+          git -c core.autocrlf=false apply --verbose --no-index $patch
           if ($LASTEXITCODE -ne 0) { throw "Ziddle patch failed: $LASTEXITCODE" }
           Pop-Location
       - name: Build VST3 engine and CLI
