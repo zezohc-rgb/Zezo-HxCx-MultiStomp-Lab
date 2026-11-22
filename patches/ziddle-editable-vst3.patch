@@ -323,7 +323,7 @@
 +});
 --- /dev/null
 +++ b/ziddle/shells/vst3-headless/src/rack_editor.rs
-@@ -0,0 +1,735 @@
+@@ -0,0 +1,738 @@
 +mod prepare;
 +
 +use std::cell::RefCell;
@@ -343,7 +343,7 @@
 +use windows_sys::Win32::UI::Controls::Dialogs::*;
 +use windows_sys::Win32::UI::Input::KeyboardAndMouse::EnableWindow;
 +use windows_sys::Win32::UI::Shell::{
-+    SHBrowseForFolderW, SHGetPathFromIDListW, BIF_RETURNONLYFSDIRS, BROWSEINFOW,
++    SHBrowseForFolderW, SHGetPathFromIDListEx, BIF_RETURNONLYFSDIRS, BROWSEINFOW, GPFIDL_DEFAULT,
 +};
 +use windows_sys::Win32::UI::WindowsAndMessaging::*;
 +use ziddle_documents::CancellationToken;
@@ -1030,8 +1030,10 @@
 +
 +unsafe fn choose_folder(hwnd: HWND) -> Option<PathBuf> {
 +    let title = wide("Selecione a pasta dos seus ZDLs");
++    let mut display_name = [0u16; 260];
 +    let request = BROWSEINFOW {
 +        hwndOwner: hwnd,
++        pszDisplayName: display_name.as_mut_ptr(),
 +        lpszTitle: title.as_ptr(),
 +        ulFlags: BIF_RETURNONLYFSDIRS,
 +        ..std::mem::zeroed()
@@ -1040,8 +1042,9 @@
 +    if item.is_null() {
 +        return None;
 +    }
-+    let mut path = [0u16; 260];
-+    let found = SHGetPathFromIDListW(item, path.as_mut_ptr()) != 0;
++    let mut path = [0u16; 32768];
++    let found =
++        SHGetPathFromIDListEx(item, path.as_mut_ptr(), path.len() as u32, GPFIDL_DEFAULT) != 0;
 +    CoTaskMemFree(item.cast());
 +    if !found {
 +        return None;
