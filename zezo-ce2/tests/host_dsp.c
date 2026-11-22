@@ -47,8 +47,8 @@ static float render(float rate, float depth, float frequency, float amplitude,
             if (stereo == 0)
                 assert(audio[i] == audio[i + 8]);
             if (stereo == 2)
-                assert(fabsf(audio[i] - 0.58f * input[i]) < 1e-6f);
-            float wet = audio[i] - (stereo == 1 ? 0.0f : 0.58f * input[i]);
+                assert(fabsf(audio[i] - 0.5f * input[i]) < 1e-6f);
+            float wet = audio[i] - (stereo == 1 ? 0.0f : 0.5f * input[i]);
             if (block >= 256)
                 energy += wet * wet;
             *peak = fmaxf(*peak, fmaxf(fabsf(audio[i]), fabsf(audio[i + 8])));
@@ -64,6 +64,7 @@ static int impulse_peak(float depth, float phase)
     int peak_index = -1;
     for (int start = 0; start < 320; start += 8) {
         memory.state.phase = phase;
+        memory.state.lfo = phase < 0.5f ? -1.0f : 1.0f;
         for (int i = 0; i < 16; ++i)
             audio[i] = start == 0 && (i == 0 || i == 8) ? 0.1f : 0.0f;
         Fx_DLY_ZezoCE2(ctx);
