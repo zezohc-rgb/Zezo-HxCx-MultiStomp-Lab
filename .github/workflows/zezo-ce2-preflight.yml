@@ -1,0 +1,185 @@
+name: Zezo CE-2 source preflight
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'zezo-ce2/**'
+      - '.github/workflows/zezo-ce2-*.yml'
+  push:
+    branches: ['feature/zezo-ce2-cloud-build']
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate source and manifest without TI compiler
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile zezo-ce2/src/zezo_ce2/build.py
+          python3 -m unittest discover -s zezo-ce2/tests -p 'test_*.py' -v
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('zezo-ce2/src/zezo_ce2')
+          m=json.loads((p/'manifest.json').read_text())
+          src=(p/'zezo_ce2.c').read_text()
+          assert m['effect_name']=='ZezoCE2'
+          assert m['audio_func_name']=='Fx_DLY_ZezoCE2'
+          assert [x['name'] for x in m['params']]==['Rate','Depth']
+          assert m['fxid']==960, 'provisional candidate ID changed: review before testing'
+          builder=(p/'build.py').read_text()
+          assert "m['gid'] == 8 and m['fxid'] == 405" in builder, 'collision guard removed'
+          assert "ZEZO_DIAGNOSTIC_BUILD" in builder, 'diagnostic guard removed'
+          assert '#pragma CODE_SECTION(Fx_DLY_ZezoCE2, ".audio")' in src
+          assert 'ZEZO_STAGE' in src and 'CLEAR_STEP' in src
+          assert not any(x in src for x in ('sinf(', 'powf(', 'malloc(', 'calloc('))
+          print('Source preflight OK; NOT a TI compile or hardware validation')
+          PY
+      - name: TI C6000 compiler availability and stage-0 compilation
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL='https://dr-download.ti.com/software-development/ide-configuration-compiler-or-debugger/MD-vqU2jj6ibH/8.5.0.LTS/ti_cgt_c6000_8.5.0.LTS_linux-x64_installer.bin'
+          curl --fail --location --retry 2 --connect-timeout 20 "$URL" -o /tmp/ti-cgt.bin
+          test "$(stat -c %s /tmp/ti-cgt.bin)" -gt 1000000
+          chmod +x /tmp/ti-cgt.bin
+          echo "Installer format:"; file /tmp/ti-cgt.bin
+          echo "Installer options:"
+          /tmp/ti-cgt.bin --help 2>&1 | head -90 || true
+          echo "Attempt unattended install:"
+          set +e
+          /tmp/ti-cgt.bin --mode unattended --prefix /tmp/ti-cgt-c6000
+          install_rc=$?
+          set -e
+          echo "Installer exit code: $install_rc"
+          echo "Installed compiler candidates:"
+          find /tmp/ti-cgt-c6000 /opt /home/runner -name cl6x -type f -print 2>/dev/null | head -30 || true
+          echo "Installer logs:"
+          find /tmp /home/runner -maxdepth 4 -iname '*install*.log' -type f -print 2>/dev/null | head -15 || true
+          test "$install_rc" -eq 0
+          test -x /tmp/ti-cgt-c6000/ti-cgt-c6000_8.5.0.LTS/bin/cl6x
+          /tmp/ti-cgt-c6000/ti-cgt-c6000_8.5.0.LTS/bin/cl6x --help | head -12
+          /tmp/ti-cgt-c6000/ti-cgt-c6000_8.5.0.LTS/bin/cl6x --c99 --opt_level=2 -mv6740 --abi=eabi --mem_model:data=far --define=ZEZO_STAGE=0 --include_path=/tmp/ti-cgt-c6000/ti-cgt-c6000_8.5.0.LTS/include -c zezo-ce2/src/zezo_ce2/zezo_ce2.c --output_file=/tmp/zezo_ce2.obj
+          test -s /tmp/zezo_ce2.obj
+          echo "TI compiler stage-0 object compiled; not a ZDL"
+          for stage in 1 2; do
+            /tmp/ti-cgt-c6000/ti-cgt-c6000_8.5.0.LTS/bin/cl6x --c99 --opt_level=2 -mv6740 --abi=eabi --mem_model:data=far --define=ZEZO_STAGE="$stage" --include_path=/tmp/ti-cgt-c6000/ti-cgt-c6000_8.5.0.LTS/include -c zezo-ce2/src/zezo_ce2/zezo_ce2.c --output_file="/tmp/zezo_ce2_stage${stage}.obj"
+            test -s "/tmp/zezo_ce2_stage${stage}.obj"
+            echo "TI compiler stage-$stage object compiled; not a ZDL"
+          done
+      - name: Link diagnostic stages 0 and 1 plus audio stage 2 ZDLs (never publish)
+        shell: bash
+        env:
+          TI_CGT_ROOT: /tmp/ti-cgt-c6000/ti-cgt-c6000_8.5.0.LTS
+          TI_CGT: /tmp/ti-cgt-c6000/ti-cgt-c6000_8.5.0.LTS
+          ZEZO_STAGE: '2'
+          ZEZO_FXID_REVIEWED: '65535'
+          ZEZO_DIAGNOSTIC_BUILD: '1'
+          ZDL_OWN_RUNTIME: '1'
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/repeat98/ZoomMultistompZDL.git /tmp/ZoomMultistompZDL
+          mkdir -p /tmp/ZoomMultistompZDL/src/zezo_ce2
+          cp zezo-ce2/src/zezo_ce2/build.py zezo-ce2/src/zezo_ce2/ce2_screen.py zezo-ce2/src/zezo_ce2/zezo_ce2.c zezo-ce2/src/zezo_ce2/manifest.json /tmp/ZoomMultistompZDL/src/zezo_ce2/
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('/tmp/ZoomMultistompZDL/src/zezo_ce2/manifest.json')
+          m=json.loads(p.read_text())
+          m['fxid']=65535  # deliberately invalid for release; diagnostic only
+          p.write_text(json.dumps(m))
+          PY
+          trap 'rm -f /tmp/ZoomMultistompZDL/dist/ZZC2S0.ZDL /tmp/ZoomMultistompZDL/dist/ZZC2S1.ZDL /tmp/ZoomMultistompZDL/dist/ZZC2S2.ZDL' EXIT
+          cd /tmp/ZoomMultistompZDL
+          echo 'Using upstream own runtime for knob handlers; no stock LineSel handler blob'
+          for stage in 0 1 2; do
+            ZEZO_STAGE="$stage" python3 src/zezo_ce2/build.py
+            test -s "dist/ZZC2S${stage}.ZDL"
+            STAGE="$stage" python3 - <<'PY'
+          import os
+          from pathlib import Path
+          stage = int(os.environ['STAGE'])
+          p = Path(f'dist/ZZC2S{stage}.ZDL')
+          b = p.read_bytes()
+          assert len(b) <= 32126, 'ZDL exceeds hardware size limit'
+          assert b[:8] == bytes(4) + b'SIZE'
+          assert b[20:24] == b'INFO'
+          assert b[60] == 8
+          assert int.from_bytes(b[64:66], 'little') == 65535
+          header_size = int.from_bytes(b[12:16], 'little')
+          elf_size = int.from_bytes(b[16:20], 'little')
+          elf_start = 20 + header_size
+          assert elf_start + elf_size <= len(b)
+          assert b[elf_start:elf_start+4] == bytes([127]) + b'ELF'
+          print(f'Stage {stage}: ZDL wrapper and ELF validated structurally; NO audio or hardware validation')
+          PY
+          done
+          python3 - <<'PY'
+          import hashlib
+          from pathlib import Path
+          a = Path('dist/ZZC2S0.ZDL').read_bytes()
+          b = Path('dist/ZZC2S2.ZDL').read_bytes()
+          middle = Path('dist/ZZC2S1.ZDL').read_bytes()
+          assert a != middle and middle != b and a != b, 'Diagnostic and audio stages must differ'
+          print('Stage 0 SHA256:', hashlib.sha256(a).hexdigest())
+          print('Stage 1 SHA256:', hashlib.sha256(middle).hexdigest())
+          print('Stage 2 SHA256:', hashlib.sha256(b).hexdigest())
+          print('Distinct stage 2 DSP build confirmed structurally, not audibly')
+          PY
+          python3 - <<'PY'
+          import hashlib, json
+          from pathlib import Path
+          outputs = {}
+          for stage in (0, 1, 2):
+              data = Path(f'dist/ZZC2S{stage}.ZDL').read_bytes()
+              outputs[str(stage)] = {'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest()}
+          Path('zezo-ce2-build-report.json').write_text(
+              json.dumps({'hardware_tested': False, 'audio_tested': False,
+                          'disposable_fxid': 65535, 'stages': outputs}, indent=2) + '\n')
+          PY
+      - name: Check candidate FXID 960 packaging without publishing binary
+        shell: bash
+        env:
+          TI_CGT_ROOT: /tmp/ti-cgt-c6000/ti-cgt-c6000_8.5.0.LTS
+          TI_CGT: /tmp/ti-cgt-c6000/ti-cgt-c6000_8.5.0.LTS
+          ZEZO_FXID_REVIEWED: '960'
+          ZDL_OWN_RUNTIME: '1'
+        run: |
+          set -euo pipefail
+          cd /tmp/ZoomMultistompZDL
+          # Candidate binary is quarantined as an experimental download, not a release.
+          # Keep candidate through artifact upload; runner is ephemeral.
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('src/zezo_ce2/manifest.json')
+          m=json.loads(p.read_text())
+          m['fxid']=960
+          p.write_text(json.dumps(m))
+          PY
+          ZEZO_STAGE=2 python3 src/zezo_ce2/build.py
+          python3 - <<'PY'
+          from pathlib import Path
+          b=Path('dist/ZZC2S2.ZDL').read_bytes()
+          assert b[60] == 8
+          assert int.from_bytes(b[64:66], 'little') == 960
+          assert len(b) <= 32126
+          print('Candidate FXID 960 packaged structurally, NOT hardware validated')
+          PY
+      - name: Quarantine experimental candidate ZDL for download
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ZEZO-CE2-EXPERIMENTAL-NOT-HARDWARE-TESTED
+          path: /tmp/ZoomMultistompZDL/dist/ZZC2S2.ZDL
+          retention-days: 7
+          if-no-files-found: error
+      - name: Upload diagnostic metadata only (no unvalidated ZDL)
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zezo-ce2-build-report
+          path: /tmp/ZoomMultistompZDL/zezo-ce2-build-report.json
+          retention-days: 7
+          if-no-files-found: error

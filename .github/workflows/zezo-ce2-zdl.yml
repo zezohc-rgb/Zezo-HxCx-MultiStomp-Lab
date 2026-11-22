@@ -1,0 +1,57 @@
+name: Zezo CE-2 experimental ZDL (TI C6000)
+on:
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: '0 = NOP, 1 = memory init, 2 = experimental chorus'
+        required: true
+        default: '0'
+        type: choice
+        options: ['0', '1', '2']
+      reviewed_fxid:
+        description: 'Enter 405 ONLY after independently verifying no FXID collision'
+        required: true
+        default: ''
+        type: string
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate authorization
+        env:
+          REVIEWED: ${{ inputs.reviewed_fxid }}
+          STAGE: ${{ inputs.stage }}
+        run: |
+          test "$REVIEWED" = "405" || { echo "FXID 405 not reviewed; stopping."; exit 1; }
+          case "$STAGE" in 0|1|2) ;; *) exit 1;; esac
+      - name: Install TI C6000 CGT 8.5.0.LTS from TI
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL='https://dr-download.ti.com/software-development/ide-configuration-compiler-or-debugger/MD-vqU2jj6ibH/8.5.0.LTS/ti_cgt_c6000_8.5.0.LTS_linux-x64_installer.bin'
+          curl --fail --location --retry 3 "$URL" -o /tmp/ti-cgt.bin
+          file /tmp/ti-cgt.bin
+          chmod +x /tmp/ti-cgt.bin
+          /tmp/ti-cgt.bin --mode unattended --prefix /tmp/ti-cgt-c6000
+          test -x /tmp/ti-cgt-c6000/ti-cgt-c6000_8.5.0.LTS/bin/cl6x
+          /tmp/ti-cgt-c6000/ti-cgt-c6000_8.5.0.LTS/bin/cl6x --help | head -12
+      - name: Build with upstream ZoomMultistompZDL linker
+        env:
+          TI_CGT_ROOT: /tmp/ti-cgt-c6000/ti-cgt-c6000_8.5.0.LTS
+          ZEZO_STAGE: ${{ inputs.stage }}
+          ZEZO_FXID_REVIEWED: ${{ inputs.reviewed_fxid }}
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/repeat98/ZoomMultistompZDL.git /tmp/ZoomMultistompZDL
+          mkdir -p /tmp/ZoomMultistompZDL/src/zezo_ce2
+          cp zezo-ce2/src/zezo_ce2/* /tmp/ZoomMultistompZDL/src/zezo_ce2/
+          cd /tmp/ZoomMultistompZDL
+          python3 src/zezo_ce2/build.py
+          ls -lh dist/ZZC2S*.ZDL
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zezo-ce2-experimental-stage-${{ inputs.stage }}
+          path: /tmp/ZoomMultistompZDL/dist/ZZC2S*.ZDL
+          if-no-files-found: error

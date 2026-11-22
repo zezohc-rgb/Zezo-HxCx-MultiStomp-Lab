@@ -1,0 +1,31 @@
+{
+  "effect_name": "ZezoCE2",
+  "audio_func_name": "Fx_DLY_ZezoCE2",
+  "gid": 8,
+  "fxid": 960,
+  "fxid_version": "0.07",
+  "flags_byte": 1,
+  "params": [
+    {
+      "name": "Rate",
+      "type": "knob",
+      "max": 100,
+      "default": 50,
+      "scale": "normalized",
+      "audio_min": 0,
+      "audio_max": 1,
+      "audio_default": 0.5
+    },
+    {
+      "name": "Depth",
+      "type": "knob",
+      "max": 100,
+      "default": 50,
+      "scale": "normalized",
+      "audio_min": 0,
+      "audio_max": 1,
+      "audio_default": 0.5
+    }
+  ],
+  "audio_nop": false
+}
