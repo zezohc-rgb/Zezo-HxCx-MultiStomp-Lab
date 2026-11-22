@@ -5,11 +5,13 @@ on:
     paths:
       - '.github/workflows/ziddle-vst3-windows.yml'
       - 'patches/ziddle-explicit-call-padding.patch'
+      - 'patches/ziddle-editable-vst3.patch'
   push:
     branches: [main]
     paths:
       - '.github/workflows/ziddle-vst3-windows.yml'
       - 'patches/ziddle-explicit-call-padding.patch'
+      - 'patches/ziddle-editable-vst3.patch'
 jobs:
   build:
     runs-on: windows-latest
@@ -24,15 +26,17 @@ jobs:
           $hash = (Get-FileHash source.zip -Algorithm SHA256).Hash.ToLowerInvariant()
           if ($hash -ne '96d083ab78d6b8c6336a11adcc042044d6f255ba2e81dfa79210a6591e984502') { throw "Source hash mismatch: $hash" }
           Expand-Archive source.zip -DestinationPath source
-      - name: Apply Ziddle DSP call analysis fix
+      - name: Apply project patches to Ziddle
         shell: pwsh
         run: |
-          $patch = Join-Path $env:RUNNER_TEMP 'ziddle-explicit-call-padding.patch'
-          $text = [IO.File]::ReadAllText("$env:GITHUB_WORKSPACE/patches/ziddle-explicit-call-padding.patch")
-          [IO.File]::WriteAllText($patch, $text.Replace("`r`n", "`n"))
           Push-Location source/ziddle-1794645921
-          git -c core.autocrlf=false apply --verbose --no-index $patch
-          if ($LASTEXITCODE -ne 0) { throw "Ziddle patch failed: $LASTEXITCODE" }
+          foreach ($name in @('ziddle-explicit-call-padding.patch', 'ziddle-editable-vst3.patch')) {
+            $patch = Join-Path $env:RUNNER_TEMP $name
+            $text = [IO.File]::ReadAllText("$env:GITHUB_WORKSPACE/patches/$name")
+            [IO.File]::WriteAllText($patch, $text.Replace("`r`n", "`n"))
+            git -c core.autocrlf=false apply --verbose --no-index $patch
+            if ($LASTEXITCODE -ne 0) { throw "Ziddle patch $name failed: $LASTEXITCODE" }
+          }
           Pop-Location
       - name: Build VST3 engine and CLI
         shell: pwsh
@@ -47,7 +51,7 @@ jobs:
         shell: pwsh
         run: |
           Push-Location source/ziddle-1794645921
-          cargo test --locked --release --target x86_64-pc-windows-msvc -p ziddle-c-lowering -p ziddle-vst3-adapter -p ziddle-vst3-headless -p ziddle-offline-renderer -p ziddle-cli --no-default-features --features ziddle-cli/plugin,ziddle-cli/documents,ziddle-cli/inspect
+          cargo test --locked --release --target x86_64-pc-windows-msvc -p ziddle-c-lowering -p ziddle-rack-engine -p ziddle-vst3-adapter -p ziddle-vst3-headless -p ziddle-offline-renderer -p ziddle-cli --no-default-features --features ziddle-cli/plugin,ziddle-cli/documents,ziddle-cli/inspect
           if ($LASTEXITCODE -ne 0) { throw "Rust tests failed: $LASTEXITCODE" }
           Pop-Location
       - name: Check built binaries
