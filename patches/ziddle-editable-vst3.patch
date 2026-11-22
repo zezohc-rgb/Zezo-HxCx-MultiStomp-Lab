@@ -323,7 +323,7 @@
 +});
 --- /dev/null
 +++ b/ziddle/shells/vst3-headless/src/rack_editor.rs
-@@ -0,0 +1,738 @@
+@@ -0,0 +1,905 @@
 +mod prepare;
 +
 +use std::cell::RefCell;
@@ -341,6 +341,10 @@
 +use windows_sys::Win32::System::LibraryLoader::GetModuleHandleExW;
 +use windows_sys::Win32::System::SystemServices::SS_ENDELLIPSIS;
 +use windows_sys::Win32::UI::Controls::Dialogs::*;
++use windows_sys::Win32::UI::Controls::{
++    InitCommonControlsEx, ICC_BAR_CLASSES, INITCOMMONCONTROLSEX, TBM_SETPOS, TBM_SETRANGEMAX,
++    TBS_NOTICKS,
++};
 +use windows_sys::Win32::UI::Input::KeyboardAndMouse::EnableWindow;
 +use windows_sys::Win32::UI::Shell::{
 +    SHBrowseForFolderW, SHGetPathFromIDListEx, BIF_RETURNONLYFSDIRS, BROWSEINFOW, GPFIDL_DEFAULT,
@@ -350,14 +354,20 @@
 +use ziddle_rack_engine::editable::{empty_slot, SLOT_COUNT};
 +use ziddle_rack_engine::editor_hook::*;
 +use ziddle_rack_engine::package::{PackageDiscovery, PlayableEffect};
++use ziddle_rack_engine::parameters::{parameter_metadata, ParameterInfo, ParameterKind};
 +use ziddle_rack_engine::rack_state::{package_for_state_effect, RackState};
 +
 +const WIDTH: u32 = 834;
-+const HEIGHT: u32 = 477;
++const HEIGHT: u32 = 641;
 +const TIMER: usize = 1;
 +const FIRMWARE: usize = 10;
 +const COMPILER: usize = 11;
 +const FOLDER: usize = 12;
++const CONTROLS: usize = 50;
++const PREVIOUS: usize = 60;
++const NEXT: usize = 61;
++const KNOBS_PER_PAGE: usize = 9;
++const TBM_GETPOS: u32 = WM_USER;
 +const PEDAL_BUDGET: f32 = 225.0;
 +const LOAD: usize = 20;
 +const ENABLE: usize = 30;
@@ -459,6 +469,22 @@
 +    load: HWND,
 +    enable: HWND,
 +    remove: HWND,
++    controls: HWND,
++}
++
++struct Knob {
++    label: HWND,
++    slider: HWND,
++}
++
++struct ParameterPanel {
++    row: usize,
++    page: usize,
++    heading: HWND,
++    previous: HWND,
++    next: HWND,
++    knobs: Vec<Knob>,
++    parameters: Vec<ParameterInfo>,
 +}
 +
 +enum Event {
@@ -507,6 +533,7 @@
 +    cards: Vec<Card>,
 +    status: HWND,
 +    meter: HWND,
++    panel: ParameterPanel,
 +    settings: Settings,
 +    job: Option<Job>,
 +    rendered: Option<RackState>,
@@ -521,6 +548,11 @@
 +        state: StateSource,
 +        action: ActionSink,
 +    ) -> Self {
++        let classes = INITCOMMONCONTROLSEX {
++            dwSize: std::mem::size_of::<INITCOMMONCONTROLSEX>() as u32,
++            dwICC: ICC_BAR_CLASSES,
++        };
++        InitCommonControlsEx(&classes);
 +        let fonts = [font(30, 700), font(19, 600), font(15, 400)];
 +        let label = |name: &str, x, y, w, h, style| {
 +            control(
@@ -566,16 +598,45 @@
 +                load: button("Carregar ZDL", LOAD + index, x + 12, y + 99, 92),
 +                enable: button("Bypass", ENABLE + index, x + 110, y + 99, 59),
 +                remove: button("Remover", REMOVE + index, x + 175, y + 99, 65),
++                controls: button("Parâmetros", CONTROLS + index, x + 145, y + 7, 95),
 +            });
 +        }
 +        let status = label(
 +            "Escolha sua pasta de ZDLs ou abra um arquivo em qualquer slot.",
 +            24,
-+            426,
++            605,
 +            786,
-+            38,
++            30,
 +            SS_ENDELLIPSIS,
 +        );
++        let heading = label("", 24, 418, 580, 24, SS_ENDELLIPSIS);
++        SendMessageW(heading, WM_SETFONT, fonts[1] as usize, 1);
++        let mut panel = ParameterPanel {
++            row: 0,
++            page: 0,
++            heading,
++            previous: button("Anterior", PREVIOUS, 626, 416, 87),
++            next: button("Próxima", NEXT, 723, 416, 87),
++            knobs: Vec::with_capacity(KNOBS_PER_PAGE),
++            parameters: Vec::new(),
++        };
++        for index in 0..KNOBS_PER_PAGE {
++            let x = 24 + (index % 3) as i32 * 267;
++            let y = 450 + (index / 3) as i32 * 49;
++            panel.knobs.push(Knob {
++                label: label("", x, y, 252, 19, SS_ENDELLIPSIS),
++                slider: control(
++                    hwnd,
++                    instance,
++                    "msctls_trackbar32",
++                    "",
++                    70 + index,
++                    [x, y + 18, 252, 28],
++                    WS_TABSTOP | TBS_NOTICKS,
++                    fonts[2],
++                ),
++            });
++        }
 +        let mut editor = Self {
 +            discovery,
 +            state,
@@ -583,6 +644,7 @@
 +            cards,
 +            status,
 +            meter,
++            panel,
 +            settings: Settings::load(),
 +            job: None,
 +            rendered: None,
@@ -642,10 +704,92 @@
 +            set_text(card.enable, if enabled { "Bypass" } else { "Ligar" });
 +            EnableWindow(card.enable, i32::from(effect.is_some()));
 +            EnableWindow(card.remove, i32::from(effect.is_some()));
++            EnableWindow(card.controls, i32::from(effect.is_some()));
 +        }
 +        let total = pedal_budget_text(total, unknown);
 +        set_text(self.meter, &total);
++        self.refresh_parameters(&rack);
 +        self.rendered = Some(rack);
++    }
++
++    unsafe fn refresh_parameters(&mut self, rack: &RackState) {
++        let panel = &mut self.panel;
++        panel.parameters = parameter_metadata(&self.discovery, rack)
++            .ok()
++            .into_iter()
++            .flat_map(|metadata| metadata.parameters)
++            .filter(|parameter| {
++                matches!(parameter.kind,
++                ParameterKind::Parameter { row, .. } if row == panel.row)
++            })
++            .collect();
++        let pages = panel.parameters.len().div_ceil(KNOBS_PER_PAGE).max(1);
++        panel.page = panel.page.min(pages - 1);
++        let slot_name = rack
++            .effects
++            .get(panel.row)
++            .and_then(|effect| package_for_state_effect(&self.discovery, effect))
++            .map_or("Vazio", |package| &package.display_name);
++        let page_label = if pages > 1 {
++            format!(" · {}/{}", panel.page + 1, pages)
++        } else {
++            String::new()
++        };
++        set_text(
++            panel.heading,
++            &format!("Slot {} · {slot_name}{page_label}", panel.row + 1),
++        );
++        ShowWindow(panel.previous, if pages > 1 { SW_SHOW } else { SW_HIDE });
++        ShowWindow(panel.next, if pages > 1 { SW_SHOW } else { SW_HIDE });
++        EnableWindow(panel.previous, i32::from(panel.page > 0));
++        EnableWindow(panel.next, i32::from(panel.page + 1 < pages));
++        for (index, knob) in panel.knobs.iter().enumerate() {
++            let parameter = panel.parameters.get(panel.page * KNOBS_PER_PAGE + index);
++            let visible = if parameter.is_some() {
++                SW_SHOW
++            } else {
++                SW_HIDE
++            };
++            ShowWindow(knob.label, visible);
++            ShowWindow(knob.slider, visible);
++            if let Some(parameter) = parameter {
++                let steps = parameter.step_count().unwrap_or(1000).max(1);
++                let value = parameter.kind.read(rack).unwrap_or(parameter.default);
++                let position = (parameter.normalized(value) * f64::from(steps)).round() as isize;
++                SendMessageW(knob.slider, TBM_SETRANGEMAX, 1, steps as isize);
++                SendMessageW(knob.slider, TBM_SETPOS, 1, position);
++                set_text(
++                    knob.label,
++                    &format!("{}: {}", parameter.name, parameter.text(value)),
++                );
++            }
++        }
++    }
++
++    unsafe fn move_parameter(&mut self, slider: HWND) {
++        let Some(index) = self
++            .panel
++            .knobs
++            .iter()
++            .position(|knob| knob.slider == slider)
++        else {
++            return;
++        };
++        let Some(parameter) = self
++            .panel
++            .parameters
++            .get(self.panel.page * KNOBS_PER_PAGE + index)
++        else {
++            return;
++        };
++        let position = SendMessageW(slider, TBM_GETPOS, 0, 0);
++        let steps = parameter.step_count().unwrap_or(1000).max(1);
++        let normalized = (position as f64 / f64::from(steps)).clamp(0.0, 1.0);
++        (self.action)(EditorAction::SetParameter {
++            id: parameter.id,
++            normalized,
++        });
++        self.refresh();
 +    }
 +
 +    unsafe fn replace(&mut self, row: usize, change: impl FnOnce(&mut RackState)) -> bool {
@@ -679,6 +823,21 @@
 +            }
 +            COMPILER => {
 +                self.select_zig(hwnd);
++            }
++            id if (CONTROLS..CONTROLS + SLOT_COUNT).contains(&id) => {
++                self.panel.row = id - CONTROLS;
++                self.panel.page = 0;
++                self.rendered = None;
++                self.refresh();
++            }
++            PREVIOUS | NEXT => {
++                self.panel.page = if id == NEXT {
++                    self.panel.page + 1
++                } else {
++                    self.panel.page.saturating_sub(1)
++                };
++                self.rendered = None;
++                self.refresh();
 +            }
 +            id if (LOAD..LOAD + SLOT_COUNT).contains(&id) => self.load(hwnd, id - LOAD),
 +            id if (ENABLE..ENABLE + SLOT_COUNT).contains(&id) => {
@@ -854,6 +1013,8 @@
 +            self.discovery.effects.push(package);
 +        }
 +        self.rendered = None;
++        self.panel.row = row;
++        self.panel.page = 0;
 +        if self.replace(row, |rack| {
 +            effect.slot_id = rack.effects[row].slot_id;
 +            rack.effects[row] = effect;
@@ -925,6 +1086,12 @@
 +                WM_COMMAND if (w >> 16) == 0 => {
 +                    if let Ok(mut editor) = state.try_borrow_mut() {
 +                        editor.command(hwnd, w & 0xffff);
++                    }
++                    return 0;
++                }
++                WM_HSCROLL => {
++                    if let Ok(mut editor) = state.try_borrow_mut() {
++                        editor.move_parameter(l as HWND);
 +                    }
 +                    return 0;
 +                }
@@ -1157,3 +1324,46 @@
 +pub fn implementation(path: &Path) -> Result<ziddle_documents::ImplementationHash, String> {
 +    input(path, 16 * 1024 * 1024).map(|bytes| ziddle_documents::ImplementationHash::of(&bytes))
 +}
+--- a/ziddle/shells/vst3-adapter/src/controller.rs
++++ b/ziddle/shells/vst3-adapter/src/controller.rs
+@@ -217,8 +217,17 @@
+                 return kInvalidArgument;
+             };
+             info.id = parameter.id;
+-            copy_wstring(&parameter.name, &mut info.title);
+-            copy_wstring(&parameter.name, &mut info.shortTitle);
++            let title = if ziddle_rack_engine::editable::enabled() {
++                match parameter.kind {
++                    ParameterKind::EffectBypass { row } | ParameterKind::Parameter { row, .. } =>
++                        format!("{} · {} · {}", row + 1, parameter.module, parameter.name),
++                    _ => parameter.name.clone(),
++                }
++            } else {
++                parameter.name.clone()
++            };
++            copy_wstring(&title, &mut info.title);
++            copy_wstring(&title, &mut info.shortTitle);
+             copy_wstring(&parameter.unit, &mut info.units);
+             info.stepCount = parameter.step_count().unwrap_or(0) as i32;
+             info.defaultNormalizedValue = parameter.normalized(parameter.default);
+--- a/ziddle/conversion/native-builder/src/build.rs
++++ b/ziddle/conversion/native-builder/src/build.rs
+@@ -114,7 +114,9 @@
+ const fn zig_target(target: PreparationTarget) -> (&'static str, &'static str) {
+     match target {
+         PreparationTarget::MacosAppleSilicon => ("aarch64-macos-none", ".dylib"),
+-        PreparationTarget::WindowsX64 => ("x86_64-windows-msvc", ".dll"),
++        // Both Windows targets use the x64 Windows calling convention. The GNU
++        // target supplies headers with Zig and does not discover the MSVC SDK.
++        PreparationTarget::WindowsX64 => ("x86_64-windows-gnu", ".dll"),
+     }
+ }
+ 
+@@ -319,7 +321,6 @@
+             }
+             write(&definition, contents.as_bytes())?;
+             link.push(definition.display().to_string());
+-            link.extend(["-Xlinker".into(), "/Brepro".into()]);
+         }
+     }
+     link.extend([
