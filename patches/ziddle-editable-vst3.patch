@@ -323,7 +323,7 @@
 +});
 --- /dev/null
 +++ b/ziddle/shells/vst3-headless/src/rack_editor.rs
-@@ -0,0 +1,905 @@
+@@ -0,0 +1,912 @@
 +mod prepare;
 +
 +use std::cell::RefCell;
@@ -494,6 +494,7 @@
 +
 +struct Job {
 +    row: usize,
++    name: String,
 +    updates: mpsc::Receiver<Event>,
 +    thread: JoinHandle<()>,
 +    cancel: CancellationToken,
@@ -947,6 +948,11 @@
 +        };
 +        let cancel = CancellationToken::default();
 +        let job_cancel = cancel.clone();
++        let name = effect
++            .file_name()
++            .unwrap_or(effect.as_os_str())
++            .to_string_lossy()
++            .into_owned();
 +        let (sender, updates) = mpsc::channel();
 +        let thread = std::thread::spawn(move || {
 +            let result = prepare::run(&effect, &firmware, &zig, &job_cancel, |progress| {
@@ -956,6 +962,7 @@
 +        });
 +        self.job = Some(Job {
 +            row,
++            name,
 +            updates,
 +            thread,
 +            cancel,
@@ -993,7 +1000,7 @@
 +                MessageBoxW(
 +                    self.status,
 +                    wide(&error).as_ptr(),
-+                    wide("CE2Soul — Preparação").as_ptr(),
++                    wide(&format!("{} — Preparação", job.name)).as_ptr(),
 +                    MB_OK | MB_ICONERROR,
 +                );
 +            }
@@ -1359,7 +1366,15 @@
      }
  }
  
-@@ -319,7 +321,6 @@
+@@ -211,6 +213,7 @@
+             "-Wno-unused-command-line-argument".to_string(),
+             "-Wno-unused-but-set-variable".to_string(),
+             "-Wno-unused-function".to_string(),
++            "-Wno-unused-label".to_string(),
+             "-Wno-unused-variable".to_string(),
+             format!("-I{}", directory.display()),
+             "-include".to_string(),
+@@ -319,7 +322,6 @@
              }
              write(&definition, contents.as_bytes())?;
              link.push(definition.display().to_string());
@@ -1367,7 +1382,7 @@
          }
      }
      link.extend([
-@@ -414,11 +415,16 @@
+@@ -414,11 +416,16 @@
  }
  
  fn run(compiler: &HostCompiler, cache: &Path, args: &[String]) -> Result<Vec<u8>, ConverterError> {
