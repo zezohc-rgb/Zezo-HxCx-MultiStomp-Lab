@@ -1387,3 +1387,112 @@
          .map_err(|error| ConverterError::Build {
              detail: format!("run {}: {error}", compiler.program.display()),
          })?;
+--- a/ziddle/runtime/effect-emulator/src/harness.rs
++++ b/ziddle/runtime/effect-emulator/src/harness.rs
+@@ -254,10 +254,6 @@
+ 
+     pub fn footswitch_engaged(&self) -> bool {
+         self.firmware_runtime.runtime.footswitch_engaged()
+-    }
+-
+-    pub(crate) fn set_playing(&self, playing: bool) {
+-        self.firmware_runtime.runtime.set_playing(playing);
+     }
+ 
+     pub fn take_unseeded_raw_reads(&self) -> u64 {
+--- a/ziddle/runtime/effect-emulator/src/rts.rs
++++ b/ziddle/runtime/effect-emulator/src/rts.rs
+@@ -12,7 +12,6 @@
+ pub(crate) struct RuntimeControls {
+     seeded_parameters: std::cell::Cell<usize>,
+     footswitch_engaged: std::cell::Cell<bool>,
+-    playing: std::cell::Cell<bool>,
+     unseeded_raw_reads: std::cell::Cell<u64>,
+     zd2_ramps: std::cell::RefCell<ziddle_effect_runtime::ramp::Zd2Ramps>,
+ }
+@@ -22,7 +21,6 @@
+         Self {
+             seeded_parameters: std::cell::Cell::new(0),
+             footswitch_engaged: std::cell::Cell::new(true),
+-            playing: std::cell::Cell::new(false),
+             unseeded_raw_reads: std::cell::Cell::new(0),
+             zd2_ramps: std::cell::RefCell::new(ziddle_effect_runtime::ramp::Zd2Ramps::new()),
+         }
+@@ -48,14 +46,6 @@
+ 
+     pub(crate) fn set_footswitch_engaged(&self, engaged: bool) {
+         self.footswitch_engaged.set(engaged);
+-    }
+-
+-    pub(crate) fn playing(&self) -> bool {
+-        self.playing.get()
+-    }
+-
+-    pub(crate) fn set_playing(&self, playing: bool) {
+-        self.playing.set(playing);
+     }
+ 
+     pub(crate) fn note_unseeded_raw_read(&self) {
+--- a/ziddle/runtime/effect-emulator/src/runtime/callbacks.rs
++++ b/ziddle/runtime/effect-emulator/src/runtime/callbacks.rs
+@@ -89,6 +89,9 @@
+     }
+ }
+ 
++// The host processes ZDL handlers synchronously. Commit the target within the
++// callback, matching the native host, where the pedal would suspend the handler
++// until its audio task finished the ramp.
+ pub(crate) fn cb_word_ramp_over_samples(
+     cpu: &mut Machine<u32>,
+     mem: &mut Memory,
+@@ -109,30 +112,14 @@
+             BodyWord::State(9),
+             "a ramp of zero samples divides by zero in the firmware's divide",
+         ),
+-        RampRequest::Step(_) => post_word_ramp(mem, ctx, BodyWord::State(9), addr, value),
++        RampRequest::Step(_) => store(ctx, mem, BodyWord::State(9), addr, value),
+     }
+ }
+ 
+ pub(crate) fn cb_word_ramp_by_step(cpu: &mut Machine<u32>, mem: &mut Memory, ctx: &mut HostCtx) {
+     let [addr, value] = word_arguments(cpu);
+-    post_word_ramp(mem, ctx, BodyWord::State(10), addr, value);
++    store(ctx, mem, BodyWord::State(10), addr, value);
+     *cpu.reg_mut(RESULT) = 0;
+-}
+-
+-fn post_word_ramp(mem: &mut Memory, ctx: &HostCtx, word: BodyWord, addr: u32, value: u32) {
+-    let playing = ctx.runtime.is_some_and(|runtime| runtime.playing());
+-    if !playing {
+-        store(ctx, mem, word, addr, value);
+-        return;
+-    }
+-    match mem.read_u32(addr) {
+-        Ok(current) if current == value => {}
+-        Ok(_) => ctx.decline(
+-            word,
+-            "a ramp requested while the audio runs suspends the handler until it arrives",
+-        ),
+-        Err(_) => ctx.decline(word, "the ramped word's address is not mapped guest memory"),
+-    }
+ }
+ 
+ pub(crate) fn cb_zdl_deferred_copy(cpu: &mut Machine<u32>, mem: &mut Memory, ctx: &mut HostCtx) {
+--- a/ziddle/runtime/effect-emulator/src/runtime/host.rs
++++ b/ziddle/runtime/effect-emulator/src/runtime/host.rs
+@@ -550,7 +550,6 @@
+         }
+         self.seed_audio(input)?;
+         self.advance_zd2_ramps();
+-        self.harness.set_playing(true);
+         Ok(())
+     }
+ 
+@@ -576,7 +575,6 @@
+ 
+     pub fn init(&mut self) -> Result<OpcodeHistogram> {
+         self.harness.set_zd2_ramps(Zd2Ramps::new());
+-        self.harness.set_playing(false);
+         self.prepare_init_environment(&[])?;
+         let mut hist = match self.init_addr {
+             Some(addr) => {
