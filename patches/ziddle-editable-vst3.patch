@@ -1367,3 +1367,23 @@
          }
      }
      link.extend([
+@@ -414,11 +415,16 @@
+ }
+ 
+ fn run(compiler: &HostCompiler, cache: &Path, args: &[String]) -> Result<Vec<u8>, ConverterError> {
+-    let output = Command::new(&compiler.program)
++    let mut command = Command::new(&compiler.program);
++    command
+         .args(args)
+         .env("ZIG_GLOBAL_CACHE_DIR", cache)
+-        .env("ZIG_LOCAL_CACHE_DIR", cache)
+-        .output()
++        .env("ZIG_LOCAL_CACHE_DIR", cache);
++    if args.iter().any(|arg| arg == zig_target(PreparationTarget::WindowsX64).0) {
++        // The COFF linker otherwise embeds the wall clock in the module.
++        command.env("SOURCE_DATE_EPOCH", "0");
++    }
++    let output = command.output()
+         .map_err(|error| ConverterError::Build {
+             detail: format!("run {}: {error}", compiler.program.display()),
+         })?;
