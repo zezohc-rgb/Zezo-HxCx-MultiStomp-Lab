@@ -26,7 +26,7 @@ jobs:
           Copy-Item target/release/ziddle.exe ../../ziddle.exe
           Copy-Item target/release/ziddle_vst3_headless.dll ../../ziddle_vst3_headless.dll
           Pop-Location
-      - name: Record plugin builder usage
+      - name: Check built binaries\n        shell: pwsh\n        run: |\n          if (-not (Test-Path ziddle.exe)) { throw "Missing ziddle.exe" }\n          if (-not (Test-Path ziddle_vst3_headless.dll)) { throw "Missing VST3 headless DLL" }\n          Get-Item ziddle.exe,ziddle_vst3_headless.dll | Select-Object Name,Length\n      - name: Record plugin builder usage
         shell: pwsh
         run: |
           & ./ziddle.exe plugin build --help | Out-File -Encoding utf8 plugin-build-help.txt
