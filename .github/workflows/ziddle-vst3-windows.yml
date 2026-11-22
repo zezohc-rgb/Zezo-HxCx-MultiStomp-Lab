@@ -2,15 +2,20 @@ name: Ziddle VST3 Windows build
 on:
   workflow_dispatch:
   pull_request:
-    paths: ['.github/workflows/ziddle-vst3-windows.yml']
+    paths:
+      - '.github/workflows/ziddle-vst3-windows.yml'
+      - 'patches/ziddle-explicit-call-padding.patch'
   push:
     branches: [main]
-    paths: ['.github/workflows/ziddle-vst3-windows.yml']
+    paths:
+      - '.github/workflows/ziddle-vst3-windows.yml'
+      - 'patches/ziddle-explicit-call-padding.patch'
 jobs:
   build:
     runs-on: windows-latest
     timeout-minutes: 60
     steps:
+      - uses: actions/checkout@v4
       - name: Download verified Ziddle source
         shell: pwsh
         run: |
@@ -19,6 +24,13 @@ jobs:
           $hash = (Get-FileHash source.zip -Algorithm SHA256).Hash.ToLowerInvariant()
           if ($hash -ne '96d083ab78d6b8c6336a11adcc042044d6f255ba2e81dfa79210a6591e984502') { throw "Source hash mismatch: $hash" }
           Expand-Archive source.zip -DestinationPath source
+      - name: Apply Ziddle DSP call analysis fix
+        shell: pwsh
+        run: |
+          Push-Location source/ziddle-1794645921
+          git apply --no-index "$env:GITHUB_WORKSPACE/patches/ziddle-explicit-call-padding.patch"
+          if ($LASTEXITCODE -ne 0) { throw "Ziddle patch failed: $LASTEXITCODE" }
+          Pop-Location
       - name: Build VST3 engine and CLI
         shell: pwsh
         run: |
@@ -32,7 +44,7 @@ jobs:
         shell: pwsh
         run: |
           Push-Location source/ziddle-1794645921
-          cargo test --locked --release --target x86_64-pc-windows-msvc -p ziddle-vst3-adapter -p ziddle-vst3-headless -p ziddle-offline-renderer -p ziddle-cli --no-default-features --features ziddle-cli/plugin,ziddle-cli/documents,ziddle-cli/inspect
+          cargo test --locked --release --target x86_64-pc-windows-msvc -p ziddle-c-lowering -p ziddle-vst3-adapter -p ziddle-vst3-headless -p ziddle-offline-renderer -p ziddle-cli --no-default-features --features ziddle-cli/plugin,ziddle-cli/documents,ziddle-cli/inspect
           if ($LASTEXITCODE -ne 0) { throw "Rust tests failed: $LASTEXITCODE" }
           Pop-Location
       - name: Check built binaries
@@ -75,5 +87,5 @@ jobs:
           path: |
             ziddle.exe
             ziddle_vst3_headless.dll
-            "*-help.txt"
+            *-help.txt
           if-no-files-found: error

@@ -1,0 +1,163 @@
+--- a/ziddle/conversion/c-lowering/src/lower.rs
++++ b/ziddle/conversion/c-lowering/src/lower.rs
+@@ -151,6 +151,7 @@
+         .after_packets(0));
+     }
+     let mut packets = Vec::new();
++    let mut idle_packets = BTreeSet::new();
+     let mut executable_ranges: Vec<(String, u32, u32)> = Vec::new();
+     for section in &executable {
+         let section_image = images[&section.index].as_slice();
+@@ -245,6 +246,9 @@
+                 )
+                 .after_packets(packet_count(&packets)));
+             }
++            if decoded.iter().all(|slot| slot.instruction.effect().only_idles()) {
++                idle_packets.insert(pc);
++            }
+             let owned_next_pc = next_pc.min(end);
+             match lower_packet_with_sites(pc, owned_next_pc, &decoded, &relocation_sites) {
+                 Ok(packet) => packets.push(packet),
+@@ -261,7 +265,7 @@
+             );
+         }
+     }
+-    link_explicit_calls(&mut packets);
++    link_explicit_calls(&mut packets, &idle_packets);
+     let entry_pc = packets.first().map(|packet| packet.pc).ok_or_else(|| {
+         lowering_error(
+             "LOWER_EMPTY_EXECUTABLE",
+--- a/ziddle/conversion/c-lowering/src/lower/module.rs
++++ b/ziddle/conversion/c-lowering/src/lower/module.rs
+@@ -1,4 +1,4 @@
+-use std::collections::BTreeMap;
++use std::collections::{BTreeMap, BTreeSet};
+ use ziddle_object_files::elf::{
+     reloc, ElfData, ElfReloc, ElfSection, ElfSymbol, ObjReloc, R_C6000_NONE, SHN_ABS,
+     SHN_LORESERVE, SHN_UNDEF,
+@@ -43,7 +43,10 @@
+     true
+ }
+ 
+-pub(crate) fn link_explicit_calls(packets: &mut [IrPacket]) {
++pub(crate) fn link_explicit_calls(
++    packets: &mut [IrPacket],
++    idle_packets: &BTreeSet<u32>,
++) {
+     let mut cycle = 0_u64;
+     let issue_cycles: Vec<_> = packets
+         .iter()
+@@ -125,12 +128,20 @@
+                 cycles += 1 + packet.idle;
+                 cursor = next;
+             }
+-            let return_pc = if redirected {
+-                packets.get(cursor + 1)?.pc
+-            } else {
+-                debug_assert_eq!(cursor, linear_shadow);
+-                linear_return
+-            };
++            debug_assert!(redirected || cursor == linear_shadow);
++            let continuation = cursor + 1;
++            let first_return_pc = packets.get(continuation)?.pc;
++            debug_assert!(redirected || first_return_pc == linear_return);
++            // A compiler may schedule a call before fetch-packet padding and put
++            // the first useful instruction after that padding in the link register.
++            let valid_returns = &packets[continuation..];
++            let mut last_return = 0;
++            while last_return + 1 < valid_returns.len()
++                && idle_packets.contains(&valid_returns[last_return].pc)
++                && valid_returns[last_return].next_pc == valid_returns[last_return + 1].pc
++            {
++                last_return += 1;
++            }
+             let mut found = None;
+             for routed_index in route {
+                 let packet = &packets[routed_index];
+@@ -160,17 +171,23 @@
+                     if write.predicate.is_some()
+                         || write.destination.n != 3
+                         || write.delay != 0
+-                        || write.constant != Some(return_pc)
+                     {
+                         continue;
+                     }
+-                    if found.is_some_and(|register| register != write.destination) {
++                    let Some(return_pc) = write.constant else {
++                        continue;
++                    };
++                    if !valid_returns[..=last_return].iter().any(|packet| packet.pc == return_pc) {
++                        continue;
++                    }
++                    let candidate = (write.destination, return_pc);
++                    if found.is_some_and(|previous| previous != candidate) {
+                         return None;
+                     }
+-                    found = Some(write.destination);
++                    found = Some(candidate);
+                 }
+             }
+-            found.map(|destination| (destination, return_pc))
++            found
+         })();
+         links.push(link);
+     }
+@@ -486,3 +503,58 @@
+ pub(super) fn packet_count(packets: &[IrPacket]) -> u32 {
+     u32::try_from(packets.len()).unwrap_or(u32::MAX)
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use crate::ir::{Branch, RegisterWrite};
++
++    fn explicit_branch() -> Vec<IrPacket> {
++        let mut packets: Vec<IrPacket> = (0..=24)
++            .step_by(4)
++            .map(|pc| IrPacket {
++                pc,
++                next_pc: pc + 4,
++                idle: 0,
++                writes: Vec::new(),
++                branches: Vec::new(),
++            })
++            .collect();
++        packets[0].branches.push(Branch {
++            predicate: None,
++            taken_when_nonnegative: None,
++            target: BranchTarget::Static(0x100),
++            issued_pc: 0,
++            delay: 5,
++            call_link: None,
++        });
++        packets[1].writes.push(RegisterWrite {
++            predicate: None,
++            destination: Reg::b(3),
++            delay: 0,
++            constant: Some(24),
++        });
++        packets[2].idle = 3;
++        packets
++    }
++
++    #[test]
++    fn explicit_call_can_return_past_idle_padding() {
++        let mut packets = explicit_branch();
++        link_explicit_calls(&mut packets, &BTreeSet::from([12, 16, 20]));
++        assert_eq!(
++            packets[0].branches[0].call_link,
++            Some(CallLink {
++                destination: Reg::b(3),
++                return_pc: 24,
++            }),
++        );
++    }
++
++    #[test]
++    fn explicit_call_does_not_skip_a_non_idle_packet() {
++        let mut packets = explicit_branch();
++        link_explicit_calls(&mut packets, &BTreeSet::from([12, 20]));
++        assert_eq!(packets[0].branches[0].call_link, None);
++    }
++}
