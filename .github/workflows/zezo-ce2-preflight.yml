@@ -148,7 +148,8 @@ jobs:
         run: |
           set -euo pipefail
           cd /tmp/ZoomMultistompZDL
-          trap 'rm -f dist/ZZC2S2.ZDL' EXIT
+          # Candidate binary is quarantined as an experimental download, not a release.
+          # Keep candidate through artifact upload; runner is ephemeral.
           python3 - <<'PY'
           import json
           from pathlib import Path
@@ -166,6 +167,14 @@ jobs:
           assert len(b) <= 32126
           print('Candidate FXID 960 packaged structurally, NOT hardware validated')
           PY
+      - name: Quarantine experimental candidate ZDL for download
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ZEZO-CE2-EXPERIMENTAL-NOT-HARDWARE-TESTED
+          path: /tmp/ZoomMultistompZDL/dist/ZZC2S2.ZDL
+          retention-days: 7
+          if-no-files-found: error
       - name: Upload diagnostic metadata only (no unvalidated ZDL)
         if: success()
         uses: actions/upload-artifact@v4
