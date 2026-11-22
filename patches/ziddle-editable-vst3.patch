@@ -6,14 +6,16 @@
  version = 4
  
  [[package]]
-@@ -2361,6 +2363,14 @@
+@@ -2361,6 +2363,16 @@
  name = "ziddle-vst3-headless"
  version = "0.1.0"
  dependencies = [
++ "serde",
 + "windows-sys 0.59.0",
 + "ziddle-documents",
 + "ziddle-effect-catalog",
 + "ziddle-effect-containers",
++ "ziddle-file-io",
 + "ziddle-library-import",
 + "ziddle-native-builder",
 + "ziddle-native-preparation",
@@ -286,7 +288,7 @@
      Ok(Payload {
 --- a/ziddle/shells/vst3-headless/Cargo.toml
 +++ b/ziddle/shells/vst3-headless/Cargo.toml
-@@ -11,3 +11,17 @@
+@@ -11,3 +11,19 @@
  [dependencies]
  ziddle-vst3-adapter.workspace = true
  
@@ -299,10 +301,12 @@
 +ziddle-library-import.workspace = true
 +ziddle-native-builder.workspace = true
 +ziddle-native-preparation.workspace = true
++ziddle-file-io.workspace = true
++serde.workspace = true
 +windows-sys = { workspace = true, features = [
 +    "Win32_Foundation", "Win32_Graphics_Gdi",
 +    "Win32_System_LibraryLoader", "Win32_System_SystemServices", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Controls_Dialogs",
-+    "Win32_UI_WindowsAndMessaging",
++    "Win32_UI_WindowsAndMessaging", "Win32_UI_Shell", "Win32_UI_Shell_Common", "Win32_System_Com",
 +] }
 --- a/ziddle/shells/vst3-headless/src/lib.rs
 +++ b/ziddle/shells/vst3-headless/src/lib.rs
@@ -319,12 +323,13 @@
 +});
 --- /dev/null
 +++ b/ziddle/shells/vst3-headless/src/rack_editor.rs
-@@ -0,0 +1,596 @@
+@@ -0,0 +1,735 @@
 +mod prepare;
 +
 +use std::cell::RefCell;
 +use std::ffi::c_void;
-+use std::os::windows::ffi::OsStringExt;
++use std::os::windows::ffi::{OsStrExt, OsStringExt};
++use std::path::Path;
 +use std::path::PathBuf;
 +use std::ptr::{null, null_mut};
 +use std::rc::Rc;
@@ -332,10 +337,14 @@
 +use std::thread::JoinHandle;
 +use windows_sys::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
 +use windows_sys::Win32::Graphics::Gdi::*;
++use windows_sys::Win32::System::Com::CoTaskMemFree;
 +use windows_sys::Win32::System::LibraryLoader::GetModuleHandleExW;
 +use windows_sys::Win32::System::SystemServices::SS_ENDELLIPSIS;
 +use windows_sys::Win32::UI::Controls::Dialogs::*;
 +use windows_sys::Win32::UI::Input::KeyboardAndMouse::EnableWindow;
++use windows_sys::Win32::UI::Shell::{
++    SHBrowseForFolderW, SHGetPathFromIDListW, BIF_RETURNONLYFSDIRS, BROWSEINFOW,
++};
 +use windows_sys::Win32::UI::WindowsAndMessaging::*;
 +use ziddle_documents::CancellationToken;
 +use ziddle_rack_engine::editable::{empty_slot, SLOT_COUNT};
@@ -348,6 +357,8 @@
 +const TIMER: usize = 1;
 +const FIRMWARE: usize = 10;
 +const COMPILER: usize = 11;
++const FOLDER: usize = 12;
++const PEDAL_BUDGET: f32 = 225.0;
 +const LOAD: usize = 20;
 +const ENABLE: usize = 30;
 +const REMOVE: usize = 40;
@@ -462,6 +473,33 @@
 +    cancel: CancellationToken,
 +}
 +
++#[derive(Default, serde::Serialize, serde::Deserialize)]
++#[serde(default)]
++struct Settings {
++    folder: Option<PathBuf>,
++    firmware: Option<PathBuf>,
++    zig: Option<PathBuf>,
++}
++
++fn preferences_path() -> Result<PathBuf, String> {
++    Ok(ziddle_rack_engine::editable::cache()?.join("preferences.json"))
++}
++
++impl Settings {
++    fn load() -> Self {
++        preferences_path()
++            .ok()
++            .and_then(|path| ziddle_file_io::read_json(&path).ok())
++            .unwrap_or_default()
++    }
++
++    fn save(&self) -> Result<(), String> {
++        let path = preferences_path()?;
++        std::fs::create_dir_all(path.parent().unwrap()).map_err(|e| e.to_string())?;
++        ziddle_file_io::write_json(&path, self).map_err(|e| e.to_string())
++    }
++}
++
 +struct Editor {
 +    discovery: PackageDiscovery,
 +    state: StateSource,
@@ -469,8 +507,7 @@
 +    cards: Vec<Card>,
 +    status: HWND,
 +    meter: HWND,
-+    firmware: Option<PathBuf>,
-+    zig: Option<PathBuf>,
++    settings: Settings,
 +    job: Option<Job>,
 +    rendered: Option<RackState>,
 +    fonts: [HFONT; 3],
@@ -513,8 +550,9 @@
 +        SendMessageW(title, WM_SETFONT, fonts[0] as usize, 1);
 +        let meter = label("", 24, 67, 500, 25, 0);
 +        SendMessageW(meter, WM_SETFONT, fonts[1] as usize, 1);
-+        button("Firmware...", FIRMWARE, 534, 62, 132);
-+        button("Zig...", COMPILER, 680, 62, 130);
++        button("Pasta ZDL...", FOLDER, 505, 62, 104);
++        button("Firmware...", FIRMWARE, 619, 62, 94);
++        button("Zig...", COMPILER, 723, 62, 87);
 +        let mut cards = Vec::with_capacity(SLOT_COUNT);
 +        for index in 0..SLOT_COUNT {
 +            let x = 24 + (index % 3) as i32 * 267;
@@ -531,7 +569,7 @@
 +            });
 +        }
 +        let status = label(
-+            "Para carregar um ZDL, selecione o firmware do pedal e o Zig 0.16.0.",
++            "Escolha sua pasta de ZDLs ou abra um arquivo em qualquer slot.",
 +            24,
 +            426,
 +            786,
@@ -545,8 +583,7 @@
 +            cards,
 +            status,
 +            meter,
-+            firmware: None,
-+            zig: None,
++            settings: Settings::load(),
 +            job: None,
 +            rendered: None,
 +            fonts,
@@ -573,7 +610,7 @@
 +            let cost = package
 +                .and_then(|package| package.dsp_load)
 +                .filter(|load| load.is_finite() && *load >= 0.0);
-+            if enabled && !rack.bypass {
++            if effect.is_some() {
 +                if let Some(cost) = cost {
 +                    total += cost;
 +                } else {
@@ -595,7 +632,10 @@
 +                (false, _) => "DSP: —".into(),
 +                (true, None) => "DSP: indisponível".into(),
 +                (true, Some(cost)) => {
-+                    format!("DSP: {cost:.1}%{}", if enabled { "" } else { " (bypass)" })
++                    format!(
++                        "DSP: {cost:.1} pts{}",
++                        if enabled { "" } else { " (bypass)" }
++                    )
 +                }
 +            };
 +            set_text(card.cost, &cost_text);
@@ -603,11 +643,7 @@
 +            EnableWindow(card.enable, i32::from(effect.is_some()));
 +            EnableWindow(card.remove, i32::from(effect.is_some()));
 +        }
-+        let total = if unknown == 0 {
-+            format!("DSP da cadeia (pedal): {total:.1}%")
-+        } else {
-+            format!("DSP conhecido: {total:.1}%  ·  {unknown} sem dados")
-+        };
++        let total = pedal_budget_text(total, unknown);
 +        set_text(self.meter, &total);
 +        self.rendered = Some(rack);
 +    }
@@ -632,19 +668,17 @@
 +
 +    unsafe fn command(&mut self, hwnd: HWND, id: usize) {
 +        match id {
-+            FIRMWARE => {
-+                if let Some(path) = choose(hwnd, "Firmware Zoom (*.exe;*.bin)\0*.exe;*.bin\0") {
-+                    set_text(self.status, &format!("Firmware: {}", path.display()));
-+                    self.firmware = Some(path);
++            FOLDER => {
++                if let Some(folder) = choose_folder(hwnd) {
++                    self.settings.folder = Some(folder);
++                    self.saved("Pasta ZDL selecionada.");
 +                }
 +            }
++            FIRMWARE => {
++                self.select_firmware(hwnd);
++            }
 +            COMPILER => {
-+                if let Some(path) =
-+                    choose(hwnd, "Zig (zig.exe)\0zig.exe\0Executáveis (*.exe)\0*.exe\0")
-+                {
-+                    set_text(self.status, &format!("Zig: {}", path.display()));
-+                    self.zig = Some(path);
-+                }
++                self.select_zig(hwnd);
 +            }
 +            id if (LOAD..LOAD + SLOT_COUNT).contains(&id) => self.load(hwnd, id - LOAD),
 +            id if (ENABLE..ENABLE + SLOT_COUNT).contains(&id) => {
@@ -665,22 +699,91 @@
 +        }
 +    }
 +
++    unsafe fn saved(&self, status: &str) {
++        match self.settings.save() {
++            Ok(()) => set_text(self.status, status),
++            Err(error) => set_text(self.status, &format!("Preferências não salvas: {error}")),
++        }
++    }
++
++    unsafe fn select_firmware(&mut self, hwnd: HWND) -> Option<PathBuf> {
++        let path = choose(hwnd, "Firmware Zoom (*.exe;*.bin)\0*.exe;*.bin\0", None)?;
++        self.settings.firmware = Some(path.clone());
++        self.saved("Firmware selecionado.");
++        Some(path)
++    }
++
++    unsafe fn select_zig(&mut self, hwnd: HWND) -> Option<PathBuf> {
++        let path = choose(
++            hwnd,
++            "Zig (zig.exe)\0zig.exe\0Executáveis (*.exe)\0*.exe\0",
++            None,
++        )?;
++        self.settings.zig = Some(path.clone());
++        self.saved("Zig selecionado.");
++        Some(path)
++    }
++
 +    unsafe fn load(&mut self, hwnd: HWND, row: usize) {
 +        if self.job.is_some() {
 +            return;
 +        }
-+        let Some(firmware) = self.firmware.clone() else {
++        let Some(effect) = choose(
++            hwnd,
++            "Efeitos Zoom (*.ZDL)\0*.ZDL\0",
++            self.settings.folder.as_deref(),
++        ) else {
++            return;
++        };
++        if let Some(folder) = effect.parent() {
++            if self.settings.folder.as_deref() != Some(folder) {
++                self.settings.folder = Some(folder.to_path_buf());
++                self.saved("Pasta ZDL selecionada.");
++            }
++        }
++        if self.settings.firmware.is_none() {
++            match prepare::implementation(&effect) {
++                Ok(implementation) => {
++                    let mut candidates = self
++                        .discovery
++                        .effects
++                        .iter()
++                        .filter(|package| package.source_implementation == implementation);
++                    if let (Some(package), None) = (candidates.next(), candidates.next()) {
++                        self.install_effect(row, package.clone());
++                        return;
++                    }
++                }
++                Err(error) => {
++                    set_text(self.status, &error);
++                    return;
++                }
++            }
++        }
++        let firmware = self
++            .settings
++            .firmware
++            .clone()
++            .filter(|path| path.is_file())
++            .or_else(|| self.select_firmware(hwnd));
++        let Some(firmware) = firmware else {
 +            set_text(
 +                self.status,
-+                "Selecione o firmware executável do seu pedal primeiro.",
++                "Selecione o firmware compatível para preparar este ZDL.",
 +            );
 +            return;
 +        };
-+        let Some(zig) = self.zig.clone() else {
-+            set_text(self.status, "Selecione zig.exe da versão 0.16.0 primeiro.");
-+            return;
-+        };
-+        let Some(effect) = choose(hwnd, "Efeitos Zoom (*.ZDL)\0*.ZDL\0") else {
++        let zig = self
++            .settings
++            .zig
++            .clone()
++            .filter(|path| path.is_file())
++            .or_else(|| self.select_zig(hwnd));
++        let Some(zig) = zig else {
++            set_text(
++                self.status,
++                "Selecione o Zig 0.16.0 para preparar este ZDL.",
++            );
 +            return;
 +        };
 +        let cancel = CancellationToken::default();
@@ -725,30 +828,7 @@
 +            EnableWindow(card.load, 1);
 +        }
 +        match result {
-+            Ok(package) => {
-+                let name = package.display_name.clone();
-+                let mut effect = RackState::from_packages(std::slice::from_ref(&*package))
-+                    .effects
-+                    .remove(0);
-+                if !self
-+                    .discovery
-+                    .effects
-+                    .iter()
-+                    .any(|old| old.id == package.id)
-+                {
-+                    self.discovery.effects.push(*package);
-+                }
-+                self.rendered = None;
-+                if self.replace(job.row, |rack| {
-+                    effect.slot_id = rack.effects[job.row].slot_id;
-+                    rack.effects[job.row] = effect;
-+                }) {
-+                    set_text(
-+                        self.status,
-+                        &format!("{} carregado no slot {}.", name, job.row + 1),
-+                    );
-+                }
-+            }
++            Ok(package) => self.install_effect(job.row, *package),
 +            Err(error) => {
 +                set_text(self.status, &error);
 +                MessageBoxW(
@@ -758,6 +838,30 @@
 +                    MB_OK | MB_ICONERROR,
 +                );
 +            }
++        }
++    }
++    unsafe fn install_effect(&mut self, row: usize, package: PlayableEffect) {
++        let name = package.display_name.clone();
++        let mut effect = RackState::from_packages(std::slice::from_ref(&package))
++            .effects
++            .remove(0);
++        if !self
++            .discovery
++            .effects
++            .iter()
++            .any(|old| old.id == package.id)
++        {
++            self.discovery.effects.push(package);
++        }
++        self.rendered = None;
++        if self.replace(row, |rack| {
++            effect.slot_id = rack.effects[row].slot_id;
++            rack.effects[row] = effect;
++        }) {
++            set_text(
++                self.status,
++                &format!("{} carregado no slot {}.", name, row + 1),
++            );
 +        }
 +    }
 +}
@@ -900,13 +1004,20 @@
 +    Ok(instance)
 +}
 +
-+unsafe fn choose(owner: HWND, filter: &str) -> Option<PathBuf> {
++unsafe fn choose(owner: HWND, filter: &str, folder: Option<&Path>) -> Option<PathBuf> {
 +    let mut filename = [0u16; 32768];
 +    let filter = wide(filter);
 +    let mut request: OPENFILENAMEW = std::mem::zeroed();
 +    request.lStructSize = std::mem::size_of::<OPENFILENAMEW>() as u32;
 +    request.hwndOwner = owner;
 +    request.lpstrFilter = filter.as_ptr();
++    let initial = folder.filter(|path| path.is_dir()).map(|path| {
++        path.as_os_str()
++            .encode_wide()
++            .chain(Some(0))
++            .collect::<Vec<_>>()
++    });
++    request.lpstrInitialDir = initial.as_ref().map_or(null(), |path| path.as_ptr());
 +    request.lpstrFile = filename.as_mut_ptr();
 +    request.nMaxFile = filename.len() as u32;
 +    request.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
@@ -916,9 +1027,41 @@
 +    let end = filename.iter().position(|&word| word == 0)?;
 +    Some(std::ffi::OsString::from_wide(&filename[..end]).into())
 +}
++
++unsafe fn choose_folder(hwnd: HWND) -> Option<PathBuf> {
++    let title = wide("Selecione a pasta dos seus ZDLs");
++    let request = BROWSEINFOW {
++        hwndOwner: hwnd,
++        lpszTitle: title.as_ptr(),
++        ulFlags: BIF_RETURNONLYFSDIRS,
++        ..std::mem::zeroed()
++    };
++    let item = SHBrowseForFolderW(&request);
++    if item.is_null() {
++        return None;
++    }
++    let mut path = [0u16; 260];
++    let found = SHGetPathFromIDListW(item, path.as_mut_ptr()) != 0;
++    CoTaskMemFree(item.cast());
++    if !found {
++        return None;
++    }
++    let end = path.iter().position(|&unit| unit == 0)?;
++    Some(std::ffi::OsString::from_wide(&path[..end]).into())
++}
++
++fn pedal_budget_text(total: f32, unknown: usize) -> String {
++    if total >= PEDAL_BUDGET {
++        format!("DSP Full · {total:.1} / {PEDAL_BUDGET:.0} pts")
++    } else if unknown > 0 {
++        format!("DSP MS-70CDR · {total:.1}+ / {PEDAL_BUDGET:.0} pts ({unknown} sem dados)")
++    } else {
++        format!("DSP MS-70CDR · {total:.1} / {PEDAL_BUDGET:.0} pts")
++    }
++}
 --- /dev/null
 +++ b/ziddle/shells/vst3-headless/src/rack_editor/prepare.rs
-@@ -0,0 +1,88 @@
+@@ -0,0 +1,92 @@
 +use std::path::Path;
 +use ziddle_documents::{era::FirmwareEra, ArtifactId, CancellationToken};
 +use ziddle_effect_catalog::CatalogEntry;
@@ -1006,4 +1149,8 @@
 +    })();
 +    let _ = std::fs::remove_dir_all(&workspace);
 +    result
++}
++
++pub fn implementation(path: &Path) -> Result<ziddle_documents::ImplementationHash, String> {
++    input(path, 16 * 1024 * 1024).map(|bytes| ziddle_documents::ImplementationHash::of(&bytes))
 +}
