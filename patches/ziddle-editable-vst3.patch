@@ -1871,7 +1871,6 @@
      }
  
      fn base(&mut self) -> *mut u8 {
-diff --git a/ziddle/runtime/c674x-cpu/src/exec.rs b/ziddle/runtime/c674x-cpu/src/exec.rs
 --- a/ziddle/runtime/c674x-cpu/src/exec.rs
 +++ b/ziddle/runtime/c674x-cpu/src/exec.rs
 @@ -1268,6 +1268,12 @@
