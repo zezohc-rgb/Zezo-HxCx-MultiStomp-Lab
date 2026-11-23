@@ -1238,11 +1238,11 @@
 +}
 --- /dev/null
 +++ b/ziddle/shells/vst3-headless/src/rack_editor/prepare.rs
-@@ -0,0 +1,92 @@
-+use std::path::Path;
+@@ -0,0 +1,119 @@
++use std::{collections::BTreeMap, path::Path};
 +use ziddle_documents::{era::FirmwareEra, ArtifactId, CancellationToken};
 +use ziddle_effect_catalog::CatalogEntry;
-+use ziddle_effect_containers::effect::execution::ExecutionIdentity;
++use ziddle_effect_containers::{effect::execution::ExecutionIdentity, zdl::ZdlInfo};
 +use ziddle_library_import::FirmwareInput;
 +use ziddle_native_builder::{HostCompiler, NativePreparer};
 +use ziddle_native_preparation::PreparationOutcome;
@@ -1260,6 +1260,25 @@
 +    Ok(data)
 +}
 +
++fn complete_from_firmware<'a>(
++    truncated: &[u8],
++    files: &'a BTreeMap<String, Vec<u8>>,
++) -> Option<&'a [u8]> {
++    let info = ZdlInfo::parse(truncated).ok()?;
++    let length = info.elf_offset.checked_add(info.size?.declared_elf_size)?;
++    if length <= truncated.len() {
++        return None;
++    }
++    let mut matches = files
++        .values()
++        .map(Vec::as_slice)
++        .filter(|candidate| candidate.len() == length && candidate.starts_with(truncated));
++    let complete = matches.next()?;
++    // Multiple copies of the same firmware entry are harmless, but a prefix
++    // shared by different complete files does not establish an identity.
++    matches.all(|candidate| candidate == complete).then_some(complete)
++}
++
 +pub fn run(
 +    effect: &Path,
 +    firmware: &Path,
@@ -1274,13 +1293,21 @@
 +    };
 +    let name = filename(effect)?;
 +    let carrier = input(effect, 16 * 1024 * 1024)?;
-+    let entry =
-+        CatalogEntry::from_bytes(effect, &carrier, &name).map_err(|error| error.to_string())?;
++    let firmware = FirmwareInput::read(&input(firmware, 128 * 1024 * 1024)?, &filename(firmware)?)
++        .map_err(|error| error.to_string())?;
++    let (entry, carrier) = match CatalogEntry::from_bytes(effect, &carrier, &name) {
++        Ok(entry) => (entry, carrier.as_slice()),
++        Err(error) => {
++            let complete =
++                complete_from_firmware(&carrier, &firmware.files).ok_or_else(|| error.to_string())?;
++            let entry =
++                CatalogEntry::from_bytes(effect, complete, &name).map_err(|error| error.to_string())?;
++            (entry, complete)
++        }
++    };
 +    if entry.era != FirmwareEra::Zdl {
 +        return Err("Choose a Zoom ZDL effect.".into());
 +    }
-+    let firmware = FirmwareInput::read(&input(firmware, 128 * 1024 * 1024)?, &filename(firmware)?)
-+        .map_err(|error| error.to_string())?;
 +    let companion = firmware.companion().map_err(|error| error.to_string())?;
 +    let compiler = HostCompiler::zig(zig).map_err(|error| error.to_string())?;
 +    let cache = editable::cache()?;
@@ -1291,13 +1318,13 @@
 +        let preparer =
 +            NativePreparer::new(compiler, &cache, &workspace).map_err(|error| error.to_string())?;
 +        let preparation = preparer
-+            .resolve(&name, &carrier, companion, &firmware.program, None)
++            .resolve(&name, carrier, companion, &firmware.program, None)
 +            .map_err(|error| error.to_string())?;
 +        let reference = &preparation.request().input.implementation;
 +        let environment = reference
 +            .environment
 +            .ok_or("The firmware environment is unknown.")?;
-+        let execution = ExecutionIdentity::of(&carrier).map_err(|error| error.to_string())?;
++        let execution = ExecutionIdentity::of(carrier).map_err(|error| error.to_string())?;
 +        let occurrence = Occurrence {
 +            id: native_effect_occurrence_id(entry.era, reference.implementation, environment),
 +            name: entry.name,
@@ -1511,3 +1538,17 @@
          self.prepare_init_environment(&[])?;
          let mut hist = match self.init_addr {
              Some(addr) => {
+--- a/ziddle/conversion/c-lowering/native-host/dll_stub.c
++++ b/ziddle/conversion/c-lowering/native-host/dll_stub.c
+@@ -16,8 +16,11 @@
+ #if defined(_WIN64) && defined(__x86_64__) && defined(__clang__)
+ 
+ __asm__(
++    /* Clang uses different symbol names for the same Win64 probe ABI. */
+     ".globl __chkstk\n"
++    ".globl ___chkstk_ms\n"
+     "__chkstk:\n"
++    "___chkstk_ms:\n"
+     "    pushq %rcx\n"
+     "    pushq %rax\n"
+     "    leaq 24(%rsp), %rcx\n"
