@@ -1522,7 +1522,33 @@
  pub(crate) fn cb_zdl_deferred_copy(cpu: &mut Machine<u32>, mem: &mut Memory, ctx: &mut HostCtx) {
 --- a/ziddle/runtime/effect-emulator/src/runtime/host.rs
 +++ b/ziddle/runtime/effect-emulator/src/runtime/host.rs
-@@ -550,7 +550,6 @@
+@@ -269,6 +269,25 @@
+             .impulse_response_for(container, firmware.as_deref().map(|spec| spec.facts()))
+             .map_err(crate::Error::Engine)?;
+         let abi = ziddle_effect_runtime::abi::services::HostAbi::for_container(container);
++        if abi.era == ziddle_documents::era::FirmwareEra::Zdl {
++            if let Some(words) = firmware
++                .as_ref()
++                .and_then(|spec| spec.facts().zdl_midi_signature_words)
++            {
++                for (address, value) in ziddle_effect_runtime::firmware::ZDL_MIDI_SIGNATURE_ADDRESSES
++                    .into_iter()
++                    .zip(words)
++                {
++                    if !harness.mem.is_mapped(address, 4) {
++                        harness.mem.map(
++                            address,
++                            value.to_le_bytes().to_vec(),
++                            ziddle_c674x_cpu::mem::RegionAccess::ReadOnly,
++                        )?;
++                    }
++                }
++            }
++        }
+         harness.mem.map_zeroed(CTRL_BASE, abi.ctrl_bytes)?;
+         harness.mem.map_zeroed(ZD2_AUDIO_ADDR, ZD2_AUDIO_LEN)?;
+         harness
+@@ -550,7 +569,6 @@
          }
          self.seed_audio(input)?;
          self.advance_zd2_ramps();
@@ -1530,7 +1556,7 @@
          Ok(())
      }
  
-@@ -576,7 +575,6 @@
+@@ -576,7 +594,6 @@
  
      pub fn init(&mut self) -> Result<OpcodeHistogram> {
          self.harness.set_zd2_ramps(Zd2Ramps::new());
@@ -1705,3 +1731,101 @@
  }
  static uint64_t zds_f64_rcp_seed(uint64_t bits) {
      uint64_t exponent = bits & UINT64_C(0x7ff0000000000000);
+--- a/ziddle/runtime/effect-runtime/src/firmware.rs
++++ b/ziddle/runtime/effect-runtime/src/firmware.rs
+@@ -226,12 +226,18 @@
+     pub words: Vec<u32>,
+ }
+ 
++/// First words of the MIDI-service signatures used by ZDLs to detect a
++/// supported pedal firmware. Their values come from the selected image.
++pub const ZDL_MIDI_SIGNATURE_ADDRESSES: [u32; 2] = [0xc00c_bf40, 0xc00b_05c0];
++
+ #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+ #[serde(rename_all = "camelCase", deny_unknown_fields)]
+ pub struct FirmwareFacts {
+     pub state_bodies: BTreeMap<u32, u32>,
+     pub service_bodies: BTreeMap<u32, u32>,
+     pub zd2_data_words: BTreeMap<u32, u32>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub zdl_midi_signature_words: Option<[u32; 2]>,
+     #[serde(default, skip_serializing_if = "Option::is_none")]
+     pub patch_tempo: Option<u32>,
+ }
+--- a/ziddle/firmware/firmware-environment/src/lib.rs
++++ b/ziddle/firmware/firmware-environment/src/lib.rs
+@@ -107,10 +107,20 @@
+     let patch_tempo = tempo_slot
+         .and_then(|slot| state_bodies.get(&slot))
+         .and_then(|&body| getter_word(decoded, body));
++    let image_word = |address: u32| {
++        segments.iter().rev().find_map(|(base, data)| {
++            let offset = address.checked_sub(*base)? as usize;
++            let bytes: [u8; 4] = data.get(offset..offset + 4)?.try_into().ok()?;
++            Some(u32::from_le_bytes(bytes))
++        })
++    };
++    let [first, second] =
++        ziddle_effect_runtime::firmware::ZDL_MIDI_SIGNATURE_ADDRESSES.map(image_word);
+     let facts = ziddle_effect_runtime::firmware::FirmwareFacts {
+         state_bodies,
+         service_bodies,
+         zd2_data_words,
++        zdl_midi_signature_words: first.zip(second).map(|(a, b)| [a, b]),
+         patch_tempo,
+     };
+     Environment::new(path, segments, facts, boot)
+--- a/ziddle/runtime/native-module/src/converted.rs
++++ b/ziddle/runtime/native-module/src/converted.rs
+@@ -185,6 +185,11 @@
+                 mapped.insert(page);
+             }
+         };
++        if abi.era == ziddle_documents::era::FirmwareEra::Zdl {
++            for address in ziddle_effect_runtime::firmware::ZDL_MIDI_SIGNATURE_ADDRESSES {
++                add(address, 4);
++            }
++        }
+         add(STACK_BASE, STACK_LEN);
+         add(CTRL_BASE, abi.ctrl_bytes);
+         add(ZD2_AUDIO_ADDR, ZD2_AUDIO_LEN);
+@@ -751,6 +756,7 @@
+     aux_bus: Option<ziddle_effect_runtime::firmware::AuxBus>,
+     service_addresses: [u32; SERVICE_TABLE_SLOTS],
+     service_aliases: [u32; SERVICE_TABLE_SLOTS],
++    zdl_midi_signature_words: Option<[u32; 2]>,
+     pub(super) cabinet_words: Vec<(u32, u32)>,
+     impulse_response: Option<ziddle_effect_runtime::firmware::ImpulseResponse>,
+     pub(super) pristine_entries: BTreeMap<u32, u32>,
+@@ -815,6 +821,7 @@
+                 .and_then(ziddle_effect_runtime::firmware::FirmwareFacts::zd2_aux_bus),
+             service_addresses,
+             service_aliases,
++            zdl_midi_signature_words: firmware_spec.and_then(|facts| facts.zdl_midi_signature_words),
+             pristine_entries: BTreeMap::new(),
+             zd2_ramps: Box::new(ziddle_effect_runtime::ramp::Zd2Ramps::new()),
+         };
+@@ -847,6 +854,23 @@
+         let mut invocation = self.invocation();
+ 
+         unsafe { (self.module.seed_image)((&mut invocation as *mut TotalInvocation).cast()) };
++        if self.module.abi.era == ziddle_documents::era::FirmwareEra::Zdl {
++            if let Some(words) = self.zdl_midi_signature_words {
++                for (address, value) in ziddle_effect_runtime::firmware::ZDL_MIDI_SIGNATURE_ADDRESSES
++                    .into_iter()
++                    .zip(words)
++                {
++                    let overlaps = self.module.manifest.image.as_ref().is_some_and(|image| {
++                        image.segments.iter().any(|segment| {
++                            segment.base < address + 4 && address < segment.base.saturating_add(segment.size)
++                        })
++                    });
++                    if !overlaps {
++                        self.write_u32(address, value);
++                    }
++                }
++            }
++        }
+     }
+ 
+     fn base(&mut self) -> *mut u8 {
