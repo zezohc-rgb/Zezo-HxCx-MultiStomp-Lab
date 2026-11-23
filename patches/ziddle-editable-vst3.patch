@@ -1580,58 +1580,7 @@
      "    leaq 24(%rsp), %rcx\n"
 --- a/ziddle/conversion/c-lowering/src/codegen/plan.rs
 +++ b/ziddle/conversion/c-lowering/src/codegen/plan.rs
-@@ -50,6 +50,7 @@
-     pub body: u32,
-     pub incoming: Machine<()>,
-     returning: bool,
-+    link_registers: [Option<u32>; 2],
- }
- 
- pub struct ExecutorResume {
-@@ -61,7 +62,7 @@
-     module: &'a IrModule,
-     ranges: BTreeMap<u32, u32>,
-     entries: Vec<ExecutorEntry>,
--    index: std::collections::HashMap<(u32, Key, bool), ExecutorEntryId>,
-+    index: std::collections::HashMap<(u32, Key, bool, [Option<u32>; 2]), ExecutorEntryId>,
- }
- 
- impl<'a> ExecutorEntries<'a> {
-@@ -103,7 +104,7 @@
-         pc: u32,
-         shape: &Machine<V>,
-     ) -> Result<ExecutorEntryId, CodegenError> {
--        self.insert(body, pc, shape, false)
-+        self.insert(body, pc, shape, false, [None; 2])
-     }
- 
-     fn insert<V: Clone + PartialEq + std::fmt::Debug>(
-@@ -112,6 +113,7 @@
-         pc: u32,
-         shape: &Machine<V>,
-         returning: bool,
-+        link_registers: [Option<u32>; 2],
-     ) -> Result<ExecutorEntryId, CodegenError> {
-         let end = self.ranges.get(&body).ok_or_else(|| {
-             format!("executor entry at 0x{pc:08x} names unknown body 0x{body:08x}")
-@@ -123,7 +125,7 @@
-             .into());
-         }
-         let incoming = entered(shape, pc);
--        let key = (body, incoming.key(), returning);
-+        let key = (body, incoming.key(), returning, link_registers);
-         if let Some(&id) = self.index.get(&key) {
-             return Ok(id);
-         }
-@@ -132,6 +134,7 @@
-             body,
-             incoming,
-             returning,
-+            link_registers,
-         });
-         self.index.insert(key, id);
-         Ok(id)
-@@ -139,30 +142,18 @@
+@@ -139,30 +139,18 @@
  
      pub(crate) fn resume_candidate<V, W: Clone + PartialEq + std::fmt::Debug>(
          &mut self,
@@ -1665,7 +1614,7 @@
          let link = branch.call_link.as_ref().ok_or_else(|| {
              format!(
                  "executor transfer 0x{:08x} has no analyzed call link; expected a returning call",
-@@ -200,7 +191,8 @@
+@@ -200,7 +188,8 @@
  
  const ENTRY_BUDGET: usize = 4096;
  
@@ -1675,26 +1624,7 @@
  
  pub enum Route {
      Enter(ExecutorEntryId),
-@@ -457,7 +449,7 @@
-             })),
-             ControlRegs::each(|_| ()),
-         );
--        let entry = self.entries.insert(start, start, &fresh, true)?;
-+        let entry = self.entries.insert(start, start, &fresh, true, [None; 2])?;
-         let raw = self.entries.enter(start, start, &fresh)?;
-         self.note_origins(|| format!("the host calling 0x{start:08x}"));
-         Ok((entry, raw))
-@@ -473,17 +465,26 @@
-         let entry = self.entries.get(id)?;
-         let (body, incoming) = (entry.body, entry.incoming.clone());
-         let mut seeded = incoming.map_values(|_| None);
-+        for (reg, value) in [ziddle_c674x_cpu::isa::Reg::a(3), ziddle_c674x_cpu::isa::Reg::b(3)]
-+            .into_iter()
-+            .zip(entry.link_registers)
-+        {
-+            seeded.set_reg(reg, value);
-+        }
-         if entry.returning {
+@@ -477,13 +466,16 @@
              seeded.set_reg(ziddle_c674x_cpu::isa::Reg::b(3), Some(RETURN_SENTINEL));
          }
          let end = self.ranges[&body];
@@ -1712,62 +1642,7 @@
              )
              .map_err(|why| {
                  format!(
-@@ -499,7 +500,7 @@
-         });
-         let mut routes = Vec::new();
-         for (index, leaf) in compiled.leaves.iter().enumerate() {
--            routes.push(self.route(leaf)?);
-+            routes.push(self.route(leaf, compiled.leaf_link_registers[index])?);
-             self.note_origins(|| {
-                 format!(
-                     "leaf {index} of entry {} departing from {:?} with {:?}",
-@@ -518,18 +519,28 @@
-         Ok(())
-     }
- 
--    fn route(&mut self, leaf: &Machine<()>) -> Result<Route, CodegenError> {
-+    fn route(
-+        &mut self,
-+        leaf: &Machine<()>,
-+        proved_links: [Option<u32>; 2],
-+    ) -> Result<Route, CodegenError> {
-         let branch = executor_departure(self.module, leaf)?;
--        let link = branch
--            .and_then(|branch| branch.call_link.as_ref())
--            .map(|link| link.return_pc);
-+        let call_link = branch.and_then(|branch| branch.call_link.as_ref());
-+        let link = call_link.map(|link| link.return_pc);
-+        let mut register_seeds = [None; 2];
-+        if let Some(link) = call_link {
-+            let side = usize::from(link.destination.side == ziddle_c674x_cpu::isa::Side::B);
-+            if proved_links[side] == Some(link.return_pc) {
-+                register_seeds[side] = proved_links[side];
-+            }
-+        }
-         let from = leaf.departed_from().unwrap_or(leaf.pc());
-         if leaf.away().is_none() {
-             if let Some(body) = self
-                 .owner(leaf.pc())
-                 .filter(|body| !self.bound.contains_key(body))
-             {
--                let entry = self.entries.enter(body, leaf.pc(), leaf)?;
-+                let entry = self.entries.insert(body, leaf.pc(), leaf, false, register_seeds)?;
-                 return Ok(match link {
-                     Some(link) => Route::Call {
-                         callee: entry,
-@@ -561,7 +572,10 @@
-             } else if known.is_none() && (leaf.loop_live() || leaf.transfers_in_flight()) {
-                 refused.push(target);
-             } else if known.is_none() {
--                bodies.push((target, self.entries.enter(target, target, leaf)?));
-+                bodies.push((
-+                    target,
-+                    self.entries.insert(target, target, leaf, false, register_seeds)?,
-+                ));
-             }
-         }
-         let boundary = match symbolic::finish_writes(leaf, "writes") {
-@@ -731,11 +745,10 @@
+@@ -731,11 +723,10 @@
                      if self.resumes.contains_key(&(site, exit)) {
                          continue;
                      }
@@ -1954,51 +1829,3 @@
      }
  
      fn base(&mut self) -> *mut u8 {
---- a/ziddle/runtime/c674x-cpu/src/exec/symbolic.rs
-+++ b/ziddle/runtime/c674x-cpu/src/exec/symbolic.rs
-@@ -11,6 +11,7 @@
-     stmts: Vec<Stmt>,
-     temps: u32,
-     leaves: Vec<Machine<()>>,
-+    leaf_link_registers: Vec<[Option<u32>; 2]>,
- }
- 
- impl Symbolic {
-@@ -237,6 +238,7 @@
-     pub body: Body,
-     pub plan: Plan,
-     pub leaves: Vec<Machine<()>>,
-+    pub leaf_link_registers: Vec<[Option<u32>; 2]>,
- }
- 
- impl Compiled {
-@@ -481,14 +483,20 @@
-             let late = registers.split_off(CARRIED);
-             let leave = if flow == Flow::Leave {
-                 let key = next.key();
-+                let links = [crate::isa::Reg::a(3), crate::isa::Reg::b(3)]
-+                    .map(|reg| dom.known(next.reg(reg)));
-                 let id = dom
-                     .leaves
-                     .iter()
--                    .position(|left| {
--                        left.key() == key && left.departed_from() == next.departed_from()
-+                    .zip(&dom.leaf_link_registers)
-+                    .position(|(left, &saved)| {
-+                        left.key() == key
-+                            && left.departed_from() == next.departed_from()
-+                            && saved == links
-                     })
-                     .unwrap_or_else(|| {
-                         dom.leaves.push(next.map_values(|_| ()));
-+                        dom.leaf_link_registers.push(links);
-                         dom.leaves.len() - 1
-                     });
-                 if late.len() > LATE {
-@@ -688,5 +696,6 @@
-         body,
-         plan,
-         leaves: dom.leaves,
-+        leaf_link_registers: dom.leaf_link_registers,
-     })
- }
