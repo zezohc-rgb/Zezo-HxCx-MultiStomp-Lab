@@ -1554,34 +1554,41 @@
      "    leaq 24(%rsp), %rcx\n"
 --- a/ziddle/conversion/c-lowering/src/codegen/plan.rs
 +++ b/ziddle/conversion/c-lowering/src/codegen/plan.rs
-@@ -139,10 +139,12 @@
+@@ -139,30 +139,18 @@
  
      pub(crate) fn resume_candidate<V, W: Clone + PartialEq + std::fmt::Debug>(
          &mut self,
 -        caller: u32,
-+        caller: ExecutorEntryId,
          call: &Machine<V>,
          returned: &Machine<W>,
      ) -> Result<Option<ExecutorResume>, CodegenError> {
-+        let entry = self.get(caller)?;
-+        let caller = entry.body;
          let branch = executor_departure(self.module, call)?
              .ok_or_else(|| {
                  format!(
-@@ -156,7 +158,11 @@
-                 branch.issued_pc
-             )
-         })?;
+-                    "executor exit at 0x{:08x} has no departing instruction; expected a call from body 0x{caller:08x}",
++                    "executor exit at 0x{:08x} has no departing instruction; expected a returning call",
+                     call.pc(),
+                 )
+             })?;
+-        let end = self.ranges.get(&caller).ok_or_else(|| {
+-            format!(
+-                "executor call 0x{:08x} names unknown caller 0x{caller:08x}",
+-                branch.issued_pc
+-            )
+-        })?;
 -        if !(caller..*end).contains(&branch.issued_pc) {
-+        // A delayed call can retire in a different body after an earlier
-+        // transfer. Its issue site is then carried into this entry.
-+        if !(caller..*end).contains(&branch.issued_pc)
-+            && !entry.incoming.has_pending_transfer_from(branch.issued_pc)
-+        {
-             return Err(format!(
-                 "executor call 0x{:08x} is outside caller 0x{caller:08x}..0x{end:08x}",
-                 branch.issued_pc
-@@ -731,11 +737,10 @@
+-            return Err(format!(
+-                "executor call 0x{:08x} is outside caller 0x{caller:08x}..0x{end:08x}",
+-                branch.issued_pc
+-            )
+-            .into());
+-        }
++        // The machine can fetch beyond a body's range to finish delay
++        // slots. A call issued there still uses its own analyzed return PC.
+         let link = branch.call_link.as_ref().ok_or_else(|| {
+             format!(
+                 "executor transfer 0x{:08x} has no analyzed call link; expected a returning call",
+@@ -731,11 +719,10 @@
                      if self.resumes.contains_key(&(site, exit)) {
                          continue;
                      }
@@ -1590,23 +1597,10 @@
                      let resume =
                          self.entries
 -                            .resume_candidate(caller, &call, &self.exits[exit.index()])?;
-+                            .resume_candidate(entry, &call, &self.exits[exit.index()])?;
++                            .resume_candidate(&call, &self.exits[exit.index()])?;
                      self.resumes
                          .insert((site, exit), resume.map(|resume| resume.entry));
                      let returned = self.exits[exit.index()].key();
---- a/ziddle/runtime/c674x-cpu/src/exec.rs
-+++ b/ziddle/runtime/c674x-cpu/src/exec.rs
-@@ -1142,6 +1142,10 @@
-         !self.pipeline.jumps.is_empty()
-     }
- 
-+    pub fn has_pending_transfer_from(&self, issued_pc: u32) -> bool {
-+        self.pipeline.jumps.iter().any(|jump| jump.issued_pc == issued_pc)
-+    }
-+
-     pub fn loop_live(&self) -> bool {
-         self.buffer.is_some() || self.event.is_some()
-     }
 --- a/ziddle/runtime/c674x-cpu/src/exec/primitive.rs
 +++ b/ziddle/runtime/c674x-cpu/src/exec/primitive.rs
 @@ -35,8 +35,8 @@
