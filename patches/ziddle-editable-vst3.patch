@@ -1750,18 +1750,20 @@
      uint64_t exponent = bits & UINT64_C(0x7ff0000000000000);
 --- a/ziddle/runtime/effect-runtime/src/firmware.rs
 +++ b/ziddle/runtime/effect-runtime/src/firmware.rs
-@@ -226,12 +226,24 @@
+@@ -226,12 +226,26 @@
      pub words: Vec<u32>,
  }
  
-+/// Words of the MIDI-service signatures used by ZDLs to detect a
-+/// supported pedal firmware. Their values come from the selected image.
-+pub const ZDL_MIDI_SIGNATURE_ADDRESSES: [u32; 19] = [
++/// Firmware words read by ZDL MIDI code for identification and initial state.
++/// Their values come from the selected firmware image.
++pub const ZDL_MIDI_SIGNATURE_ADDRESSES: [u32; 24] = [
 +    0xc00c_bf40, 0xc00b_05c0,
 +    0xc00c_bf44, 0xc00c_bf48, 0xc00c_bf4c, 0xc00c_bf50, 0xc00b_b168,
 +    0xc00b_b16c, 0xc00d_d818, 0xc00d_d81c, 0xc00b_ada8, 0xc00b_05c4,
 +    0xc00b_05c8, 0xc00b_05cc, 0xc00b_05d0, 0xc009_b278, 0xc009_b280,
 +    0xc008_b318, 0xc008_b320,
++    // Data initialized by C startup after the AIS loader runs.
++    0xc00e_f9d8, 0xc009_d398, 0xc00e_f888, 0xc00e_f894, 0xc00e_f9a8,
 +];
 +
  #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -1775,7 +1777,7 @@
      #[serde(default, skip_serializing_if = "Option::is_none")]
      pub patch_tempo: Option<u32>,
  }
-@@ -264,6 +276,13 @@
+@@ -264,6 +278,13 @@
  }
  
  impl FirmwareFacts {
@@ -1791,7 +1793,7 @@
          self.zd2_data_words.get(&offset).map(|&address| {
 --- a/ziddle/firmware/firmware-environment/src/lib.rs
 +++ b/ziddle/firmware/firmware-environment/src/lib.rs
-@@ -107,10 +107,20 @@
+@@ -107,10 +107,24 @@
      let patch_tempo = tempo_slot
          .and_then(|slot| state_bodies.get(&slot))
          .and_then(|&body| getter_word(decoded, body));
@@ -1802,8 +1804,12 @@
 +            Some(u32::from_le_bytes(bytes))
 +        })
 +    };
-+    let signatures =
-+        ziddle_effect_runtime::firmware::ZDL_MIDI_SIGNATURE_ADDRESSES.map(image_word);
++    let startup = ziddle_firmware_analysis::cinit::locate(&image, bytes).map(|located| {
++        ziddle_firmware_analysis::cinit::initialize(&image.segments, bytes, located.bounds)
++    });
++    let signatures = ziddle_effect_runtime::firmware::ZDL_MIDI_SIGNATURE_ADDRESSES.map(|address| {
++        image_word(address).or_else(|| startup.as_ref()?.word(address))
++    });
      let facts = ziddle_effect_runtime::firmware::FirmwareFacts {
          state_bodies,
          service_bodies,
