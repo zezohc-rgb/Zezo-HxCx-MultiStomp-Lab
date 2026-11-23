@@ -1607,3 +1607,79 @@
      pub fn loop_live(&self) -> bool {
          self.buffer.is_some() || self.event.is_some()
      }
+--- a/ziddle/runtime/c674x-cpu/src/exec/primitive.rs
++++ b/ziddle/runtime/c674x-cpu/src/exec/primitive.rs
+@@ -35,8 +35,8 @@
+     "zds_f32_lt"(Word, Word) -> Word, F32Gt "zds_f32_gt"(Word, Word) -> Word, F32Eq
+     "zds_f32_eq"(Word, Word) -> Word, F32FromI32 "zds_f32_from_i32"(Word) -> Word,
+     F32FromU32 "zds_f32_from_u32"(Word) -> Word, F32ToI32 "zds_f32_to_i32"(Word, Flag) ->
+-    Word, F32RcpSeed "zds_f32_rcp_seed"(Word) -> Word, F64Add "zds_f64_add"(Long, Long)
+-    -> Long, F64Sub "zds_f64_sub"(Long, Long) -> Long, F64Mul "zds_f64_mul"(Long, Long)
++    Word, F32RcpSeed "zds_f32_rcp_seed"(Word) -> Word, F32RsqrSeed "zds_f32_rsqr_seed"(Word)
++    -> Word, F64Add "zds_f64_add"(Long, Long) -> Long, F64Sub "zds_f64_sub"(Long, Long) -> Long, F64Mul "zds_f64_mul"(Long, Long)
+     -> Long, F64Lt "zds_f64_lt"(Long, Long) -> Word, F64Gt "zds_f64_gt"(Long, Long) ->
+     Word, F64Eq "zds_f64_eq"(Long, Long) -> Word, F64FromF32 "zds_f64_from_f32"(Word) ->
+     Long, F64FromI32 "zds_f64_from_i32"(Word) -> Long, F64FromU32
+--- a/ziddle/runtime/c674x-cpu/src/semantics/c.rs
++++ b/ziddle/runtime/c674x-cpu/src/semantics/c.rs
+@@ -449,13 +449,7 @@
+     }
+ 
+     fn f32_rsqr_seed(self) -> Self {
+-        match self.known() {
+-            Ok(a) => CW::Known(a.f32_rsqr_seed().0),
+-            Err(recorder) => {
+-                recorder.refuse("RSQRSP's seed".into());
+-                self
+-            }
+-        }
++        host1(Primitive::F32RsqrSeed, self, W32::f32_rsqr_seed)
+     }
+ 
+     fn f64_from_f32(self) -> CL<'a> {
+--- a/ziddle/conversion/c-lowering/native-host/float_bits.h
++++ b/ziddle/conversion/c-lowering/native-host/float_bits.h
+@@ -157,13 +157,40 @@
+     return (uint32_t)(int32_t)rounded;
+ }
+ 
++static uint32_t zds_round_f32_seed(uint32_t bits) {
++    uint32_t truncated = bits & UINT32_C(0xffff8000);
++    return (bits & UINT32_C(0x7fff)) >= UINT32_C(0x4000) ? truncated + UINT32_C(0x8000) : truncated;
++}
+ static uint32_t zds_f32_rcp_seed(uint32_t value) {
+     uint32_t exponent = (value >> 23) & UINT32_C(0xff);
+     uint32_t source = exponent == 0 || exponent == 0xff ? value : value & UINT32_C(0xffff8000);
+     uint32_t sign = value & UINT32_C(0x80000000);
+-    uint32_t bits = zds_rts_f32_from_double(1.0 / zds_rts_f32_as_double(source), sign);
+-    uint32_t truncated = bits & UINT32_C(0xffff8000);
+-    return (bits & UINT32_C(0x7fff)) >= UINT32_C(0x4000) ? truncated + UINT32_C(0x8000) : truncated;
++    return zds_round_f32_seed(zds_rts_f32_from_double(1.0 / zds_rts_f32_as_double(source), sign));
++}
++
++static double zds_sqrt_f64(double value) {
++#if defined(__x86_64__) && (defined(__GNUC__) || defined(__clang__))
++    double result;
++    __asm__("sqrtsd %1, %0" : "=x"(result) : "x"(value));
++    return result;
++#elif defined(__aarch64__) && (defined(__GNUC__) || defined(__clang__))
++    double result;
++    __asm__("fsqrt %d0, %d1" : "=w"(result) : "w"(value));
++    return result;
++#else
++    return __builtin_sqrt(value);
++#endif
++}
++
++static uint32_t zds_f32_rsqr_seed(uint32_t value) {
++    uint32_t exponent = (value >> 23) & UINT32_C(0xff);
++    if (exponent == 0 || exponent == 0xff) {
++        float root = (float)zds_sqrt_f64(zds_rts_f32_as_double(value));
++        return zds_round_f32_seed(zds_f32_bits(1.0f / root));
++    }
++    const uint32_t truncated = value & UINT32_C(0xffff8000);
++    double root = zds_sqrt_f64(zds_rts_f32_as_double(truncated));
++    return zds_round_f32_seed(zds_f32_bits((float)(1.0 / root)));
+ }
+ static uint64_t zds_f64_rcp_seed(uint64_t bits) {
+     uint64_t exponent = bits & UINT64_C(0x7ff0000000000000);
