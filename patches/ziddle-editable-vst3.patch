@@ -1588,7 +1588,35 @@
          let link = branch.call_link.as_ref().ok_or_else(|| {
              format!(
                  "executor transfer 0x{:08x} has no analyzed call link; expected a returning call",
-@@ -731,11 +719,10 @@
+@@ -200,7 +188,8 @@
+ 
+ const ENTRY_BUDGET: usize = 4096;
+ 
+-const STATE_BUDGET: usize = 4096;
++const MIN_STATE_BUDGET: usize = 4096;
++const MAX_STATE_BUDGET: usize = 16384;
+ 
+ pub enum Route {
+     Enter(ExecutorEntryId),
+@@ -477,13 +466,16 @@
+             seeded.set_reg(ziddle_c674x_cpu::isa::Reg::b(3), Some(RETURN_SENTINEL));
+         }
+         let end = self.ranges[&body];
++        // Give larger bodies room for compact instructions and different
++        // pipeline states while bounding the total expansion of any entry.
++        let state_budget = ((end - body) as usize / 2).clamp(MIN_STATE_BUDGET, MAX_STATE_BUDGET);
+         let mut program = Program::within(self.code.clone(), vec![body..end], self.targets.clone());
+         let compiled = symbolic::compile_seeded(
+                 &mut program,
+                 &seeded,
+                 "entry",
+                 false,
+-                STATE_BUDGET,
++                state_budget,
+             )
+             .map_err(|why| {
+                 format!(
+@@ -731,11 +723,10 @@
                      if self.resumes.contains_key(&(site, exit)) {
                          continue;
                      }
