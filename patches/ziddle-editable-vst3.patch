@@ -1636,7 +1636,17 @@
              )
              .map_err(|why| {
                  format!(
-@@ -731,11 +723,10 @@
+@@ -580,6 +572,9 @@
+         };
+         let unmatched = match link {
+             Some(_) => Unmatched::Unbound,
++            None if known.is_none() && matches!(&boundary, Boundary::Unavailable(_)) => {
++                Unmatched::Unbound
++            }
+             None => Unmatched::Exit(self.exit(leaf)),
+         };
+         Ok(Route::Dispatch(Dispatch {
+@@ -731,11 +726,10 @@
                      if self.resumes.contains_key(&(site, exit)) {
                          continue;
                      }
@@ -1649,6 +1659,19 @@
                      self.resumes
                          .insert((site, exit), resume.map(|resume| resume.entry));
                      let returned = self.exits[exit.index()].key();
+@@ -898,6 +892,12 @@
+         match (dispatch.unmatched, dispatch.link) {
+             (Unmatched::Exit(exit), None) => self.departs(shape, exit, from),
+             (Unmatched::Unbound, Some(_)) => Ok(()),
++            (Unmatched::Unbound, None)
++                if dispatch.known.is_none()
++                    && matches!(&dispatch.boundary, Boundary::Unavailable(_)) =>
++            {
++                Ok(())
++            }
+             (unmatched, link) => Err(format!(
+                 "{from} treats an unmatched target as {unmatched:?} with call link {link:x?}"
+             )
 --- a/ziddle/runtime/c674x-cpu/src/exec/primitive.rs
 +++ b/ziddle/runtime/c674x-cpu/src/exec/primitive.rs
 @@ -35,8 +35,8 @@
