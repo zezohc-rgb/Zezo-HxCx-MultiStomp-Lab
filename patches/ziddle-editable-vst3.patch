@@ -1522,19 +1522,13 @@
  pub(crate) fn cb_zdl_deferred_copy(cpu: &mut Machine<u32>, mem: &mut Memory, ctx: &mut HostCtx) {
 --- a/ziddle/runtime/effect-emulator/src/runtime/host.rs
 +++ b/ziddle/runtime/effect-emulator/src/runtime/host.rs
-@@ -269,6 +269,25 @@
+@@ -269,6 +269,19 @@
              .impulse_response_for(container, firmware.as_deref().map(|spec| spec.facts()))
              .map_err(crate::Error::Engine)?;
          let abi = ziddle_effect_runtime::abi::services::HostAbi::for_container(container);
 +        if abi.era == ziddle_documents::era::FirmwareEra::Zdl {
-+            if let Some(words) = firmware
-+                .as_ref()
-+                .and_then(|spec| spec.facts().zdl_midi_signature_words)
-+            {
-+                for (address, value) in ziddle_effect_runtime::firmware::ZDL_MIDI_SIGNATURE_ADDRESSES
-+                    .into_iter()
-+                    .zip(words)
-+                {
++            if let Some(spec) = &firmware {
++                for (address, value) in spec.facts().zdl_midi_signatures() {
 +                    if !harness.mem.is_mapped(address, 4) {
 +                        harness.mem.map(
 +                            address,
@@ -1548,7 +1542,7 @@
          harness.mem.map_zeroed(CTRL_BASE, abi.ctrl_bytes)?;
          harness.mem.map_zeroed(ZD2_AUDIO_ADDR, ZD2_AUDIO_LEN)?;
          harness
-@@ -550,7 +569,6 @@
+@@ -550,7 +563,6 @@
          }
          self.seed_audio(input)?;
          self.advance_zd2_ramps();
@@ -1556,7 +1550,7 @@
          Ok(())
      }
  
-@@ -576,7 +594,6 @@
+@@ -576,7 +588,6 @@
  
      pub fn init(&mut self) -> Result<OpcodeHistogram> {
          self.harness.set_zd2_ramps(Zd2Ramps::new());
@@ -1733,13 +1727,19 @@
      uint64_t exponent = bits & UINT64_C(0x7ff0000000000000);
 --- a/ziddle/runtime/effect-runtime/src/firmware.rs
 +++ b/ziddle/runtime/effect-runtime/src/firmware.rs
-@@ -226,12 +226,18 @@
+@@ -226,12 +226,24 @@
      pub words: Vec<u32>,
  }
  
-+/// First words of the MIDI-service signatures used by ZDLs to detect a
++/// Words of the MIDI-service signatures used by ZDLs to detect a
 +/// supported pedal firmware. Their values come from the selected image.
-+pub const ZDL_MIDI_SIGNATURE_ADDRESSES: [u32; 2] = [0xc00c_bf40, 0xc00b_05c0];
++pub const ZDL_MIDI_SIGNATURE_ADDRESSES: [u32; 19] = [
++    0xc00c_bf40, 0xc00b_05c0,
++    0xc00c_bf44, 0xc00c_bf48, 0xc00c_bf4c, 0xc00c_bf50, 0xc00b_b168,
++    0xc00b_b16c, 0xc00d_d818, 0xc00d_d81c, 0xc00b_ada8, 0xc00b_05c4,
++    0xc00b_05c8, 0xc00b_05cc, 0xc00b_05d0, 0xc009_b278, 0xc009_b280,
++    0xc008_b318, 0xc008_b320,
++];
 +
  #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
  #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -1748,10 +1748,24 @@
      pub service_bodies: BTreeMap<u32, u32>,
      pub zd2_data_words: BTreeMap<u32, u32>,
 +    #[serde(default, skip_serializing_if = "Option::is_none")]
-+    pub zdl_midi_signature_words: Option<[u32; 2]>,
++    pub zdl_midi_signature_words: Option<Vec<Option<u32>>>,
      #[serde(default, skip_serializing_if = "Option::is_none")]
      pub patch_tempo: Option<u32>,
  }
+@@ -264,6 +276,13 @@
+ }
+ 
+ impl FirmwareFacts {
++    pub fn zdl_midi_signatures(&self) -> impl Iterator<Item = (u32, u32)> + '_ {
++        ZDL_MIDI_SIGNATURE_ADDRESSES.into_iter()
++            .zip(self.zdl_midi_signature_words.iter().flatten().copied())
++            .filter_map(|(address, word)| word.map(|word| (address, word)))
++    }
++
++
+     pub fn impulse_response_home(&self) -> Option<ImpulseResponseHome> {
+         let offset = crate::abi::host_abi::DataRole::Zd2ImpulseResponse.offset();
+         self.zd2_data_words.get(&offset).map(|&address| {
 --- a/ziddle/firmware/firmware-environment/src/lib.rs
 +++ b/ziddle/firmware/firmware-environment/src/lib.rs
 @@ -107,10 +107,20 @@
@@ -1765,13 +1779,13 @@
 +            Some(u32::from_le_bytes(bytes))
 +        })
 +    };
-+    let [first, second] =
++    let signatures =
 +        ziddle_effect_runtime::firmware::ZDL_MIDI_SIGNATURE_ADDRESSES.map(image_word);
      let facts = ziddle_effect_runtime::firmware::FirmwareFacts {
          state_bodies,
          service_bodies,
          zd2_data_words,
-+        zdl_midi_signature_words: first.zip(second).map(|(a, b)| [a, b]),
++        zdl_midi_signature_words: signatures.iter().any(Option::is_some).then(|| signatures.to_vec()),
          patch_tempo,
      };
      Environment::new(path, segments, facts, boot)
@@ -1793,36 +1807,35 @@
      aux_bus: Option<ziddle_effect_runtime::firmware::AuxBus>,
      service_addresses: [u32; SERVICE_TABLE_SLOTS],
      service_aliases: [u32; SERVICE_TABLE_SLOTS],
-+    zdl_midi_signature_words: Option<[u32; 2]>,
++    zdl_midi_signature_words: Vec<(u32, u32)>,
      pub(super) cabinet_words: Vec<(u32, u32)>,
      impulse_response: Option<ziddle_effect_runtime::firmware::ImpulseResponse>,
      pub(super) pristine_entries: BTreeMap<u32, u32>,
-@@ -815,6 +821,7 @@
+@@ -815,6 +821,10 @@
                  .and_then(ziddle_effect_runtime::firmware::FirmwareFacts::zd2_aux_bus),
              service_addresses,
              service_aliases,
-+            zdl_midi_signature_words: firmware_spec.and_then(|facts| facts.zdl_midi_signature_words),
++            zdl_midi_signature_words: firmware_spec
++                .into_iter()
++                .flat_map(ziddle_effect_runtime::firmware::FirmwareFacts::zdl_midi_signatures)
++                .collect(),
              pristine_entries: BTreeMap::new(),
              zd2_ramps: Box::new(ziddle_effect_runtime::ramp::Zd2Ramps::new()),
          };
-@@ -847,6 +854,23 @@
+@@ -847,6 +857,19 @@
          let mut invocation = self.invocation();
  
          unsafe { (self.module.seed_image)((&mut invocation as *mut TotalInvocation).cast()) };
 +        if self.module.abi.era == ziddle_documents::era::FirmwareEra::Zdl {
-+            if let Some(words) = self.zdl_midi_signature_words {
-+                for (address, value) in ziddle_effect_runtime::firmware::ZDL_MIDI_SIGNATURE_ADDRESSES
-+                    .into_iter()
-+                    .zip(words)
-+                {
-+                    let overlaps = self.module.manifest.image.as_ref().is_some_and(|image| {
-+                        image.segments.iter().any(|segment| {
-+                            segment.base < address + 4 && address < segment.base.saturating_add(segment.size)
-+                        })
-+                    });
-+                    if !overlaps {
-+                        self.write_u32(address, value);
-+                    }
++            for index in 0..self.zdl_midi_signature_words.len() {
++                let (address, value) = self.zdl_midi_signature_words[index];
++                let overlaps = self.module.manifest.image.as_ref().is_some_and(|image| {
++                    image.segments.iter().any(|segment| {
++                        segment.base < address + 4 && address < segment.base.saturating_add(segment.size)
++                    })
++                });
++                if !overlaps {
++                    self.write_u32(address, value);
 +                }
 +            }
 +        }
