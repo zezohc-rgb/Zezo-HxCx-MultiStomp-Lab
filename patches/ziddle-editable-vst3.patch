@@ -1881,3 +1881,14 @@ diff --git a/ziddle/runtime/c674x-cpu/src/exec.rs b/ziddle/runtime/c674x-cpu/src
              if let Some(value) = through {
                  let address = dom.mask(value, !1);
                  let mut to = None;
+@@ -1333,7 +1339,9 @@
+         self.interrupt.blocked = !self.pipeline.jumps.is_empty() || self.buffer.is_some();
+         self.tick(dom, obs, forced)?;
+         let holding = self.buffer.as_ref().is_some_and(|st| {
+-            (st.dynlen.is_some() && !st.resumed) || matches!(self.event, Some(Event::Begin { .. }))
++            // A queued begin can park fetch only after the current kernel
++            // has been read. Until then the buffer still needs its SPKERNEL.
++            st.dynlen.is_some() && (!st.resumed || matches!(self.event, Some(Event::Begin { .. })))
+         });
+         if self.pipeline.idle > 0 || holding {
+             self.pipeline.idle = self.pipeline.idle.saturating_sub(1);
