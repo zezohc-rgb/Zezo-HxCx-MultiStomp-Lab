@@ -1865,3 +1865,19 @@
      }
  
      fn base(&mut self) -> *mut u8 {
+diff --git a/ziddle/runtime/c674x-cpu/src/exec.rs b/ziddle/runtime/c674x-cpu/src/exec.rs
+--- a/ziddle/runtime/c674x-cpu/src/exec.rs
++++ b/ziddle/runtime/c674x-cpu/src/exec.rs
+@@ -1268,6 +1268,12 @@
+                 }
+                 landed = true;
+             }
++            if landed && self.buffer.as_ref().is_some_and(|st| st.until.is_some()) {
++                // SPRUFE8B §7.14: a taken branch idles the active loop buffer.
++                // SPLOOPW does not support reloading.
++                self.buffer = None;
++                self.event = None;
++            }
+             if let Some(value) = through {
+                 let address = dom.mask(value, !1);
+                 let mut to = None;
